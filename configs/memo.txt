@@ -1,0 +1,144 @@
+
+# ノイズ付加無し条件
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/train_ok_data/ok_without_wheel/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/val_ok_data/ok_without_wheel/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/test_ok_data/ok_without_wheel/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/test_ng_data/ng_inner_ring/*.wav
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/test_ng_data/ng_outer_ring/*.wav
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/without_noise_HPF(fc=10Hz)/test_ng_data/ng_rolling_elements/*.wav
+
+
+# ノイズ付加ありSN5dB
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/train_ok_data/ok_without_wheel/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/val_ok_data/ok_without_wheel/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/test_ok_data/ok_without_wheel/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/test_ng_data/ng_inner_ring/*.wav
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/test_ng_data/ng_outer_ring/*.wav
+    - /home/mnt/Extreme_SSD_8TB/dataset/Fault_Simulator/Sound/tmp/minimaster/for_machine_learning/with_Urban8K_2/5dB/test_ng_data/ng_rolling_elements/*.wav
+
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/train_ok_data/ok/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/val_ok_data/ok/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/test_ok_data/ok/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/test_ng_data/ng_nopowder/*.wav
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/test_ng_data/ng_jamming/*.wav
+    - /home/mnt/Extreme_SSD_8TB/IMPACT/for_anomaly_detection/ColdSpray/stethoscope/test_ng_data/ng_nogas/*.wav
+
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/each_impulse_audio_files_only_clean_sum/4s/CH2/flange1_nut1/nut_all_100/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/each_impulse_audio_files_only_clean_sum/4s/CH2/flange1_nut1/nut_all_100/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/each_impulse_audio_files_only_clean_sum/4s/CH2/flange1_nut1/nut_all_100/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/each_impulse_audio_files_only_clean_sum/4s/CH2/flange1_nut1/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/each_impulse_audio_files_only_clean_sum/4s/CH2/flange1_nut1/nut_1_0/*.wav
+
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/train_ok_data/nut_all_100/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/val_ok_data/nut_all_100/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ok_data/nut_all_100/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_1_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_half_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH2/pipe_0.2m/test_ng_data/nut_half_0/*.wav
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/train_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/train_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/train_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/train_ok_data/nut_all_100/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/val_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/val_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/val_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/val_ok_data/nut_all_100/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/test_ok_data/nut_all_100/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/test_ok_data/nut_all_100/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_half_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_half_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_half_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_half_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_1_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_1.0m/test_ng_data/nut_1_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.0m/test_ng_data/nut_1_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_2.8m/test_ng_data/nut_1_0/*.wav
+
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/train_ok_data/nut_all_100/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/val_ok_data/nut_all_100/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ok_data/nut_all_100/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_all_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_all_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_half_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_half_0/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_1_50/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/data_for_anomaly_detection/4s/CH3/pipe_0.2m/test_ng_data/nut_1_0/*.wav
+
+
+
+
+filenames:
+  checkpoint_best: "checkpoints/best.pt"
+  checkpoint_best_full_path: "/home/Documents/ezoe/Anomaly_Detection/program/AE_for_Impulse/result/202511_ebara/sound/4s_crop_1.99s_2.3s_20mel_120mel/pipe_2.8m/nut_all/checkpoints/best.pt"
+  metrics_csv: "metrics.csv"
+  learning_curve_png: "learning_curve.png"
+  scores_csv: "scores.csv"
+  confusion_matrix_png: "confusion_matrix.png"
+  score_hist_png: "score_hist.png"
+  score_hist_ok_by_subclass_png: "score_hist_ok_by_subclass.png"
+  score_hist_ng_by_subclass_png: "score_hist_ng_by_subclass.png"
+  score_hist_all_subclasses_png: "score_hist_all_subclasses.png"
+  roc_png: "roc.png"
+  pr_png: "pr.png"

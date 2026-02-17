@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "BYOL-A train.py (with AUDIO_DIR)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "/usr/bin/python3",
+      "args": [
+        "/path/to/wav_dir",
+        "--config_path=config.yaml",
+        "--epochs=1"
+      ],
+      "justMyCode": false
+    }
+  ]
+}

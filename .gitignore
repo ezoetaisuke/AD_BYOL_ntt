@@ -1,0 +1,11 @@
+# 実験結果（頻繁に変わるので管理しない）
+result/
+
+# Pythonのよくある不要物（任意だけど入れると快適）
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.DS_Store

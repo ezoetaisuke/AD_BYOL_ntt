@@ -1,0 +1,328 @@
+# =========================
+# Audio / Feature
+# =========================
+audio:
+  target_sr: 51200
+  to_mono: true               # true: ステレオ→モノラル合成（後でfalseにも可）
+  resample_if_mismatch: true  # 入力srが異なるときリサンプル
+  expect_same_length: true    # すべて同一長を前提（セグメント化しない）
+
+feature:
+  # 選択: ["logmel", "mfcc"]
+  type: "logmel"
+
+  # === Log-Mel params ===
+  logmel:
+    n_mels: 128        # [64..256] 大きいほど周波数分解能↑・計算量↑ base:128
+    fmin: 20          # [0..sr/2]
+    fmax: 25600        # 既定=sr/2
+    n_fft: 2048        # [1024..4096] 大きいほど周波数分解能↑ base:2048
+    hop_length: 512    # [256..1024] 小さいほど時間分解能↑・計算量↑ base:512
+    power: 2.0         # 2.0: パワースペクトル
+    ref: 1.0           # dB変換時の参照値
+
+  # === MFCC params ===
+  mfcc:
+    n_mfcc: 40         # 次元数 [20..80]
+    deltas: false      # Δ, ΔΔ を連結するなら true
+
+  # === 全体正規化（CMVN） ===
+  normalize:
+    enable: true      # trueでCMVN
+    eps: 1.0e-8
+
+  crop:
+    enable: true
+
+    freq:
+      enable: true
+      # メルバンド index (0〜n_mels-1)
+      # 例: 32〜96 あたりをインパルスに関係する帯域として使う
+      f_min_bin: 20
+      f_max_bin: 120
+
+    # time:
+    #   enable: true
+    #   # 例: ファイル長 0.5s のうち、0.10〜0.12s あたりにインパルスが出る想定
+    #   t_min_sec: 0.005
+    #   t_max_sec: 0.025
+    #   # もしくはフレーム指定
+    #   # t_min_frame: 40
+    #   # t_max_frame: 48
+
+    time:
+      enable: true
+      # 例: ファイル長 0.5s のうち、0.10〜0.12s あたりにインパルスが出る想定
+      t_min_sec: 0.00
+      t_max_sec: 0.040
+      # もしくはフレーム指定
+      # t_min_frame: 40
+      # t_max_frame: 48
+
+# =========================
+# Data (glob)
+# =========================
+
+
+# data:
+#   train_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/train_ok_data/ok_trq_100nm/*.wav
+#   val_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/val_ok_data/ok_trq_100nm/*.wav
+#   test_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260209_anomaly_detection/CH2/test_ok_data/ok_trq_100nm/*.wav
+#   test_ng_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260209_anomaly_detection/CH2/test_ng_data/ng_trq_080nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260209_anomaly_detection/CH2/test_ng_data/ng_trq_050nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260209_anomaly_detection/CH2/test_ng_data/ng_trq_030nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260209_anomaly_detection/CH2/test_ng_data/ng_trq_000nm/*.wav
+
+
+data:
+  train_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/train_ok_data/ok_trq_100nm/*.wav
+  val_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/val_ok_data/ok_trq_100nm/*.wav
+  test_ok_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260217_anomaly_detection_clean/CH2/test_ok_data/ok_trq_100nm/*.wav
+  test_ng_glob:
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260217_anomaly_detection_clean/CH2/test_ng_data/ng_trq_080nm/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260217_anomaly_detection_clean/CH2/test_ng_data/ng_trq_050nm/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260217_anomaly_detection_clean/CH2/test_ng_data/ng_trq_030nm/*.wav
+    - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260205_CPP_IH_demo_add_measurement/20260217_anomaly_detection_clean/CH2/test_ng_data/ng_trq_000nm/*.wav
+
+# data:
+#   train_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/train_ok_data/ok_trq_100nm/*.wav
+#   val_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/val_ok_data/ok_trq_100nm/*.wav
+#   test_ok_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/test_ok_data/ok_trq_100nm/*.wav
+#   test_ng_glob:
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/test_ng_data/ng_trq_080nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/test_ng_data/ng_trq_050nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/test_ng_data/ng_trq_030nm/*.wav
+#     - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/test_ng_data/ng_trq_000nm/*.wav
+
+# =========================
+# Model / Loss
+# =========================
+model:
+  type: "conv2d_ae"
+  bottleneck_dim: 256 # AE のボトルネック次元（フラット後に全結合で圧縮）base:256
+
+
+
+loss:
+  recon_type: "mse"            # ["mse","l1","gaussian_nll",]
+  gaussian_nll_sigma2: 1.0     # gaussian_nll使用時のσ^2（大きいほど誤差重み↓）
+
+# =========================
+# Train / Schedule / Loader
+# =========================
+train:
+  batch_size: 8
+  epochs: 200
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.00001 # 過学習してそうなときなどに値を大きくする（デフォルト1e-5。KL使うときは0にしておくのが無難。）
+  amp: true  # 学習速度に影響
+  grad_clip_norm: 5.0 # 1.0~5.0とかが適正値。大きくすると学習自由度高いが発散リスクも上昇。
+
+schedule:
+  plateau:
+    factor: 0.5 # 改善が止まったと判定したらLRをfactor倍に縮小
+    patience: 5 # 改善無しがpatience epoch分続いたらLRを下げる
+    min_lr: 1.0e-10  # LRの下限。小さくすると、微細な最適化が効く半面、学習がだらつく可能性
+  early_stopping:
+    patience: 10   # 監視=val ELBO（小さい方が良い）
+
+loader:
+  num_workers: 8         # [4..8] 環境により調整
+  pin_memory: true
+  persistent_workers: true
+
+# =========================
+# Scoring / Threshold / Eval
+# =========================
+scoring:
+  # primary: ["recon_mse","recon_l1","mahala","mahalanobis","selective_mahala"]
+  primary: "mahala"
+  aggregate_method: "topk_mean"  # ["mean","max","topk_mean"]
+  topk_ratio: 0.1
+
+  # Mahalanobis distance scoring (on residual diff = x - x_hat).
+  # Enable by setting scoring.primary: "mahala" (or "mahalanobis").
+  mahala:
+    # Optional: explicit stats file path. If empty, uses output_dir + filenames.mahala_stats_pt.
+    stats_path: ""
+    # Vectorization of residuals for covariance estimation / MD scoring.
+    # "freq": per-time-frame residual vectors of dimension (C*F). Recommended and memory-safe.
+    vectorize: "freq"
+    # Ridge regularization strength for covariance: Σ_reg = Σ + eps*I
+    eps: 1.0e-6
+    # Use pseudo-inverse for robustness when Σ is (near-)singular.
+    use_pinv: true
+    # If true, train.py also saves Mahalanobis stats even when primary != "mahala".
+    save_stats: true
+
+
+mahala:
+  enabled: true
+  data:
+    train_ok_glob:
+      - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/20260128_CPP_IH_demo/20260202_anomaly_detection/CH2/train_ok_data/ok_trq_100nm/*.wav
+    val_ok_glob:
+      - ""
+  # Optional: explicit stats file path. If empty, uses output_dir + filenames.mahala_stats_pt.
+  stats_path: ./result/tmp/checkpoints/mahala_stats.pt
+  # Vectorization of residuals for covariance estimation / MD scoring.
+  # "freq": per-time-frame residual vectors of dimension (C*F). Recommended and memory-safe.
+  vectorize: "freq"
+  # Ridge regularization strength for covariance: Σ_reg = Σ + eps*I
+  eps: 1.0e-6
+  # Use pseudo-inverse for robustness when Σ is (near-)singular.
+  use_pinv: true
+  # If true, train.py also saves Mahalanobis stats even when primary != "mahala".
+  save_stats: true
+
+
+
+# =========================================
+# Selective Mahalanobis (source/target)
+#  - After training: estimate residual stats for BOTH domains and save .pt
+#  - Eval: anomaly_score = min(MD_source, MD_target)
+#  - Paths can be absolute or relative to output_dir
+# =========================================
+selective_mahala:
+  enabled: true
+  train:
+    # Paths (glob) for statistics estimation after training
+    source_path: "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/train_ok_data/nut_all_100/*.wav"
+    target_path: "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20260122_data_for_anomaly_detection_clean_fine_tuning_total10/2s/tmp/CH5/pipe_1.0m/train_ok_data/nut_all_100/*.wav"
+  val:
+    # Optional extra OK data for statistics estimation (if empty, not used)
+    source_path: ""
+    target_path: ""
+  save:
+    source_precision_path: "checkpoints/source_mahala_stats.pt"
+    target_precision_path: "checkpoints/target_mahala_stats.pt"
+
+
+threshold:
+  # ["p99_val_ok","youden_test","f1max_test"]
+  method: "f1max_test"
+
+# =========================
+# Confidence (NOT calibrated probability)
+# =========================
+confidence:
+  enable: true
+  method: "sigmoid_thr"
+  sigmoid_clip_max: 100.0
+  sigmoid_clip_min: -100.0
+  # 温度パラメータ（大きいほど p が 0.5 に寄りやすく、"自信"が出にくい）
+  # - z = (score - thr) / tau
+  # - p_anomaly = sigmoid(z)
+  # 注意：p は校正確率ではなく、thrからの距離（余裕度）を0〜1に写像した値
+  tau: 5.0
+  # true: 0〜100（%表記）でCSVへ出す / false: 0〜1
+  as_percent: true
+  # 追加の可読列（"normal=..%, anomaly=..%"）も出す
+  add_text: true
+  text_digits: 1
+
+
+# アニーリング有効時にELBOを使って評価するβ
+# "auto": end値を使う / "fixed": model.betaを使う
+eval:
+  elbo_beta_mode: "auto"
+  save_recon_images:
+    enable: false       # ← ここで保存のON/OFF
+    folder_name: "img"  # 出力先（output_dir/img）
+    max_items: 0        # 0なら全件、>0ならその件数まで保存
+    cmap: "turbo"       # 入力/再構成スペクトログラムの色
+    diff_mode: "abs"    # "abs": |X-Xhat|, "signed": X-Xhat（差分の表現）
+    dpi: 150            # 画像解像度
+    show_colorbar: true # カラーバー表示（Input/Recon共有 + Diff専用）
+
+
+
+# =========================
+# Output / Files / Misc
+# =========================
+output_dir: ./result/tmp
+filenames:
+  checkpoint_best: "checkpoints/best.pt"
+  mahala_stats_pt: "checkpoints/mahala_stats.pt"
+  # checkpoint_best_full_path: "/home/Documents/ezoe/Anomaly_Detection/program/AE_for_Impulse_FineTuning_mahalanobis/result/tmp/CH5/train_pipe_0.2m/normal_big/checkpoints/best.pt"
+  metrics_csv: "metrics.csv"
+  learning_curve_png: "learning_curve.png"
+  scores_csv: "scores.csv"
+  scores_ok_splits_csv: "scores_ok_splits.csv"
+  confusion_matrix_png: "confusion_matrix.png"
+  score_hist_png: "score_hist.png"
+  score_hist_ok_by_subclass_png: "score_hist_ok_by_subclass.png"
+  score_hist_ng_by_subclass_png: "score_hist_ng_by_subclass.png"
+  score_hist_all_subclasses_png: "score_hist_all_subclasses.png"
+  score_hist_all_subclasses_with_confidence_png: "score_hist_all_subclasses_with_confidence.png"
+  score_hist_train_val_test_ok_png: "score_hist_train_val_test_ok.png"
+  roc_png: "roc.png"
+  pr_png: "pr.png"
+
+seed: 42
+
+# # =========================
+# # Fine-tuning Settings (for Domain Adaptation)
+# # =========================
+# finetune:
+#   # ドメインAで学習済みの重みパス
+#   base_ckpt_path: "/home/Documents/ezoe/Anomaly_Detection/program/AE_for_Impulse_FineTuning/result/202511_ebara/focas_normal_data/CH5/2s_crop_0.99s_1.3s_20mel_120mel/pipe_all/pipe_train_0.2/checkpoints/best.pt"
+  
+#   # 出力サブディレクトリ (output_dir / out_subdir に保存される)
+#   out_subdir: "fine_tuning"
+  
+#   data:
+#     # ドメインBの少量の正常データ (10〜50サンプル想定)
+#     train_ok_glob: 
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20260119_data_for_anomaly_detection_clean_fine_tuning/2s/tmp/CH5/pipe_0.2m/train_ok_data/nut_all_100/*.wav"   
+#       - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20260122_data_for_anomaly_detection_clean_fine_tuning_total10/2s/tmp/CH5/pipe_1.0m/train_ok_data/nut_all_100/*.wav
+#     # 指定しない(null)場合は train_ok_glob から自動で 80/20 分割して検証に使用
+#     val_ok_glob: 
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20260119_data_for_anomaly_detection_clean_fine_tuning/2s/tmp/CH5/pipe_0.2m/val_ok_data/nut_all_100/*.wav"
+#       - /home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20260122_data_for_anomaly_detection_clean_fine_tuning_total10/2s/tmp/CH5/pipe_1.0m/val_ok_data/nut_all_100/*.wav
+#     test_ok_glob:
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ok_data/nut_all_100/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ok_data/nut_all_100/*.wav"
+#     test_ng_glob:
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_all_50/*.wav"
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_all_0/*.wav"
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_half_50/*.wav"
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_half_0/*.wav"
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_1_50/*.wav"
+#       - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_0.2m/test_ng_data/nut_1_0/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_all_50/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_all_0/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_half_50/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_half_0/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_1_50/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_1.0m/test_ng_data/nut_1_0/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_2.0m/test_ng_data/nut_all_50/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_2.0m/test_ng_data/nut_all_0/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_2.0m/test_ng_data/nut_1_50/*.wav"
+#       # - "/home/mnt/Extreme_SSD_8TB/Anomaly_Detection/202511_ebara/20251223_data_for_anomaly_detection_clean/2s/tmp/CH5/pipe_2.0m/test_ng_data/nut_1_0/*.wav"
+  
+#   strategy:
+#     # "encoder": エンコーダを凍結し、デコーダのみドメインBに適合させる（Few-shot推奨）
+#     # "none": 全層更新
+#     # "all_but_decoder": ボトルネック含めデコーダ以外すべて凍結
+#     freeze: "encoder"
+
+#   train:
+#     lr: 1.0e-4        # FT用の学習率（通常は元学習時の 1/10 程度を推奨）
+#     epochs: 200        # 少データなので 30〜100 程度で十分なことが多い
+#     batch_size: 4     # データが少ないため小さめを推奨
+
+#   output:
+#     filenames:
+#       checkpoint_best: "checkpoints/best_ft.pt"
