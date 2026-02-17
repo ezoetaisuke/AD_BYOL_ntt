@@ -1,0 +1,99 @@
+seed: 42
+output_dir: ./result/byola
+
+audio:
+  target_sr: 48000
+  to_mono: true
+
+feature:
+  # 既存features.pyのキーをそのまま利用（log-mel + crop互換）
+  type: logmel
+  target_frames: null
+  normalize:
+    enable: false
+    eps: 1.0e-8
+  mfcc:
+    n_mfcc: 20
+    deltas: false
+  logmel:
+    n_fft: 2048
+    hop_length: 512
+    n_mels: 64
+    fmin: 20
+    fmax: 20000
+    power: 2.0
+    ref: 1.0
+  crop:
+    enable: false
+    freq:
+      enable: false
+      f_min_bin: 0
+      f_max_bin: 63
+    time:
+      enable: false
+      t_min_sec: 0.0
+      t_max_sec: 1.0
+
+data:
+  train_ok_glob:
+    - /path/to/train_ok/*.wav
+  eval_glob:
+    - /path/to/eval/*.wav
+
+byola:
+  # 必須: pretrained / scratch を切り替える
+  mode: pretrained
+
+  model:
+    feature_dim: 2048
+    pretrained_weight_path: byol_a/pretrained_weights/AudioNTT2020-BYOLA-64x96d2048.pth
+
+  # pretrainedモード専用の波形整形設定（scratchでは使わない）
+  pretrained_input:
+    target_sr: 48000
+    min_len: 48000
+    target_len: 96000
+    pad_mode: zero   # zero / repeat
+    trim_mode: center # center / left
+
+  # 時間情報を保持するため、ファイルをチャンク分割して系列埋め込みを作る
+  time_embedding:
+    chunk_sec: 0.5
+    hop_sec: 0.25
+
+  # フレーム距離系列 -> 1ファイルスコア への集約
+  score_aggregate:
+    method: topk_mean # max / mean / topk_mean / percentile
+    topk_ratio: 0.1
+    percentile: 95.0
+
+  mahalanobis:
+    eps: 1.0e-6
+    use_pinv: true
+    diag_only: false
+
+  # thresholdを与えると y_pred 列をCSVに追加
+  threshold:
+    value: null
+
+  ssl_train:
+    # pretrained開始時は通常OFF（埋め込み抽出のみ）
+    enable_in_pretrained: false
+    # scratch開始時は通常ON
+    enable_in_scratch: true
+    epochs: 10
+    batch_size: 8
+    lr: 1.0e-4
+    weight_decay: 1.0e-5
+    proj_dim: 256
+    proj_hidden_dim: 1024
+    ema_decay: 0.99
+    augment_noise_std: 0.05
+    augment_dropout: 0.1
+
+  save:
+    stats_path: checkpoints/byola_mahala_stats.pt
+    encoder_path: checkpoints/byola_encoder.pt
+    eval_csv: scores/byola_scores.csv
+    skip_log_path: logs/skip_train.csv
+    skip_log_eval_path: logs/skip_eval.csv
