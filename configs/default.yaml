@@ -17,7 +17,7 @@ feature:
     fmin: 20          # [0..sr/2]
     fmax: 25600        # 既定=sr/2
     n_fft: 2048        # [1024..4096] 大きいほど周波数分解能↑ base:2048
-    hop_length: 512    # [256..1024] 小さいほど時間分解能↑・計算量↑ base:512
+    hop_length: 128    # [256..1024] 小さいほど時間分解能↑・計算量↑ base:512
     power: 2.0         # 2.0: パワースペクトル
     ref: 1.0           # dB変換時の参照値
 
@@ -35,7 +35,7 @@ feature:
     enable: true
 
     freq:
-      enable: true
+      enable: false
       # メルバンド index (0〜n_mels-1)
       # 例: 32〜96 あたりをインパルスに関係する帯域として使う
       f_min_bin: 20
@@ -124,7 +124,7 @@ loss:
 # =========================
 byol:
   # 必須: pretrained / scratch
-  mode: "pretrained"
+  mode: "scratch"
 
   # BYOL-A encoder設定
   feature_d: 2048
@@ -133,7 +133,7 @@ byol:
   proj_hidden_dim: 1024
   ema_decay: 0.99
   augment_noise_std: 0.05
-  augment_dropout: 0.10
+  augment_dropout: 0.0
   spec_augment:
     freq_mask_enable: false
     time_mask_enable: false
