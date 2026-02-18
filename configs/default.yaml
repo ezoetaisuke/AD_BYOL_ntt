@@ -108,7 +108,7 @@ data:
 # Model / Loss
 # =========================
 model:
-  type: "conv2d_ae"
+  type: "byol_a"
   bottleneck_dim: 256 # AE のボトルネック次元（フラット後に全結合で圧縮）base:256
 
 
@@ -116,6 +116,43 @@ model:
 loss:
   recon_type: "mse"            # ["mse","l1","gaussian_nll",]
   gaussian_nll_sigma2: 1.0     # gaussian_nll使用時のσ^2（大きいほど誤差重み↓）
+
+
+
+# =========================
+# BYOL-A (AE置換用: 最小差分)
+# =========================
+byol:
+  # 必須: pretrained / scratch
+  mode: "pretrained"
+
+  # BYOL-A encoder設定
+  feature_d: 2048
+  pretrained_weight_path: "byol_a/pretrained_weights/AudioNTT2020-BYOLA-64x96d2048.pth"
+  proj_size: 256
+  proj_hidden_dim: 1024
+  ema_decay: 0.99
+  augment_noise_std: 0.05
+  augment_dropout: 0.10
+
+  # pretrained時のみ適用する入力整形（scratch時は強制しない）
+  pretrained_input:
+    min_len: 48000
+    target_len: 96000
+    pad_mode: "zero"      # zero / repeat
+    trim_mode: "center"   # center / left
+
+  # 時間情報を潰さないチャンク埋め込み
+  time_embedding:
+    chunk_sec: 0.50
+    hop_sec: 0.25
+
+  # chunkごとのMahalanobis距離系列 -> 1ファイルスコア
+  score_aggregate:
+    method: "topk_mean"   # max / topk_mean / percentile / mean+std / mean
+    topk_ratio: 0.1
+    percentile: 95.0
+    std_ratio: 1.0
 
 # =========================
 # Train / Schedule / Loader
