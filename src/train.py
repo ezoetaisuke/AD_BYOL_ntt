@@ -251,14 +251,18 @@ def run_train(cfg):
         pd.DataFrame(history).to_csv(loss_history_csv, index=False)
         plot_learning_curve(lc_png, history)
 
-        if val_loss < best_val:
+        improved = val_loss < best_val
+        if improved:
             best_val = val_loss
             no_improve = 0
             torch.save({"model": model.online_encoder.state_dict(), "cfg": cfg}, ckpt_path)
         else:
             no_improve += 1
 
-        print(f"[Epoch {epoch}] train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+        print(
+            f"[Epoch {epoch}] train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+            f"{'BEST ✔' if improved else ''}"
+        )
         if no_improve >= es_patience:
             print(f"Early stopping: no val improvement for {es_patience} epochs")
             break
