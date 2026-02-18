@@ -14,7 +14,14 @@ from byol_a.byol_a.models import AudioNTT2020
 from .calc_mahalanobis import cov_to_precision, mahalanobis_distance
 from .datasets import AudioDataset
 from .features import FeatureExtractor
-from .utils import ensure_dir, plot_hist_by_class
+from .utils import (
+    ensure_dir,
+    compute_roc_pr,
+    plot_confusion,
+    plot_roc_pr,
+    extract_subclass_from_path,
+    plot_hist_all_subclasses,
+)
 
 
 def _load_wave(path, cfg):
@@ -203,8 +210,22 @@ def run_eval(cfg):
     metrics_path = Path(out_dir) / cfg["filenames"].get("eval_metrics_csv", "eval_metrics.csv")
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
 
-    hist_path = Path(out_dir) / cfg["filenames"].get("score_hist_png", "score_hist.png")
-    plot_hist_by_class(str(hist_path), test_ok_scores, test_ng_scores)
+    cm_path = Path(out_dir) / cfg["filenames"].get("confusion_matrix_png", "confusion_matrix.png")
+    plot_confusion(str(cm_path), y_true, y_pred, labels=("OK", "NG"))
+
+    roc_pack, pr_pack = compute_roc_pr(y_true, scores)
+    roc_path = Path(out_dir) / cfg["filenames"].get("roc_png", "roc.png")
+    pr_path = Path(out_dir) / cfg["filenames"].get("pr_png", "pr.png")
+    plot_roc_pr(str(roc_path), str(pr_path), roc_pack, pr_pack)
+
+    subclasses = [extract_subclass_from_path(p) for p in all_paths]
+    hist_path = Path(out_dir) / cfg["filenames"].get("score_hist_all_subclasses_png", "score_hist_all_subclasses.png")
+    plot_hist_all_subclasses(
+        str(hist_path),
+        scores,
+        subclasses,
+        title="All Subclasses (OK + NG): Score Histogram with Color by Subclass",
+    )
 
     skip_log = Path(out_dir) / "skipped_wavs.log"
     with open(skip_log, "a", encoding="utf-8") as f:
