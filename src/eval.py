@@ -1,19 +1,16 @@
 import os
 from pathlib import Path
 
-import librosa
 import numpy as np
 import pandas as pd
-import soundfile as sf
 import torch
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from tqdm import tqdm
 
 from byol_a.byol_a.models import AudioNTT2020
 
-from .calc_mahalanobis import cov_to_precision, mahalanobis_distance
-from .datasets import AudioDataset
-from .features import FeatureExtractor
+from .calc_mahalanobis import mahalanobis_distance
+from .datasets import create_loader
 from .utils import (
     compute_roc_pr,
     ensure_dir,
@@ -24,109 +21,35 @@ from .utils import (
 )
 
 
-def _load_wave(path, cfg):
-    y, sr = sf.read(path, dtype="float32", always_2d=True)
-    y = y.mean(axis=1) if cfg["audio"].get("to_mono", True) else y[:, 0]
-
-    mode = str(cfg.get("byol", {}).get("mode", "pretrained")).lower()
-    prep = cfg.get("byol", {}).get("pretrained_input", {})
-    target_sr = int(cfg["audio"]["target_sr"])
-
-    if mode == "pretrained" and sr != target_sr:
-        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
-        sr = target_sr
-
-    if mode == "scratch" and sr != target_sr and cfg["audio"].get("resample_if_mismatch", False):
-        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
-        sr = target_sr
-
-    min_len = prep.get("min_len", None) if mode == "pretrained" else None
-    if min_len is not None and len(y) < int(min_len):
-        y = np.pad(y, (0, int(min_len) - len(y)), mode="constant")
-
-    target_len = prep.get("target_len", None) if mode == "pretrained" else None
-    trim_mode = str(prep.get("trim_mode", "center")).lower()
-    if target_len is not None:
-        target_len = int(target_len)
-        if len(y) < target_len:
-            y = np.pad(y, (0, target_len - len(y)), mode="constant")
-        elif len(y) > target_len:
-            start = 0 if trim_mode == "left" else (len(y) - target_len) // 2
-            y = y[start:start + target_len]
-
-    return y
+def _resolve_checkpoint_path(cfg):
+    ckpt_full = cfg.get("filenames", {}).get("checkpoint_best_full_path")
+    if ckpt_full:
+        return ckpt_full
+    return os.path.join(cfg["output_dir"], cfg["filenames"]["checkpoint_best"])
 
 
-def _chunk_feature(feat: np.ndarray, cfg):
-    byol_cfg = cfg.get("byol", {})
-    emb_cfg = byol_cfg.get("time_embedding", {})
-    sr = int(cfg["audio"]["target_sr"])
-    hop = int(cfg["feature"]["logmel"]["hop_length"])
-
-    chunk_sec = float(emb_cfg.get("chunk_sec", 0.5))
-    hop_sec = float(emb_cfg.get("hop_sec", 0.25))
-    chunk_frames = max(1, int(round(chunk_sec * sr / hop)))
-    hop_frames = max(1, int(round(hop_sec * sr / hop)))
-
-    t = feat.shape[-1]
-    if t < chunk_frames:
-        feat = np.pad(feat, ((0, 0), (0, 0), (0, chunk_frames - t)), mode="constant")
-        t = feat.shape[-1]
-
-    out = []
-    start = 0
-    while start + chunk_frames <= t:
-        out.append(feat[:, :, start:start + chunk_frames])
-        start += hop_frames
-    if not out:
-        out = [feat[:, :, :chunk_frames]]
-    return out
+def _resolve_stats_path(cfg):
+    stats_path = str(cfg.get("mahala", {}).get("stats_path", "")).strip()
+    if stats_path:
+        return stats_path
+    return os.path.join(cfg["output_dir"], cfg["filenames"].get("mahala_stats_pt", "checkpoints/mahala_stats.pt"))
 
 
-def _aggregate(scores, cfg):
-    agg = cfg.get("byol", {}).get("score_aggregate", {})
-    method = str(agg.get("method", "topk_mean")).lower()
-    arr = np.asarray(scores, dtype=np.float64)
-    if method == "max":
-        return float(np.max(arr))
-    if method == "mean":
-        return float(np.mean(arr))
-    if method == "percentile":
-        return float(np.percentile(arr, float(agg.get("percentile", 95.0))))
-    if method == "topk_mean":
-        ratio = float(agg.get("topk_ratio", 0.1))
-        k = max(1, int(round(arr.size * ratio)))
-        return float(np.mean(np.partition(arr, -k)[-k:]))
-    if method in {"mean+std", "mean_std"}:
-        return float(np.mean(arr) + float(agg.get("std_ratio", 1.0)) * np.std(arr))
-    raise ValueError(f"unsupported aggregate method: {method}")
+@torch.no_grad()
+def _score_loader(loader, model, mu, precision, device):
+    scores, y_true, paths = [], [], []
+    for x, y, p in tqdm(loader, desc="[scoring]", leave=False):
+        x = x.to(device)
+        emb = model(x)
+        if emb.dim() > 2:
+            emb = emb.flatten(start_dim=1)
 
+        md = mahalanobis_distance(emb, mu, precision, sqrt=True).detach().cpu().numpy()
+        scores.extend(np.asarray(md, dtype=np.float64).ravel().tolist())
+        y_true.extend(y.detach().cpu().numpy().astype(np.int64).tolist())
+        paths.extend(list(p))
 
-def _extract_chunk_embeddings(files, cfg, model, device):
-    feat_extractor = FeatureExtractor(cfg)
-    all_embs = []
-    per_file_embs = []
-    valid_files = []
-    skipped = []
-
-    for path in tqdm(files, desc="embedding"):
-        try:
-            y = _load_wave(path, cfg)
-            feat = feat_extractor(y)
-            chunks = _chunk_feature(feat, cfg)
-            x = torch.from_numpy(np.stack(chunks, axis=0)).to(device)
-            with torch.no_grad():
-                emb = model(x).detach().cpu()
-            all_embs.append(emb)
-            per_file_embs.append(emb)
-            valid_files.append(path)
-        except Exception as exc:
-            skipped.append((path, str(exc)))
-
-    if not all_embs:
-        raise RuntimeError("No valid wavs to evaluate.")
-
-    return torch.cat(all_embs, dim=0), per_file_embs, valid_files, skipped
+    return np.asarray(scores, dtype=np.float64), np.asarray(y_true, dtype=np.int64), list(paths)
 
 
 def run_eval(cfg):
@@ -137,58 +60,71 @@ def run_eval(cfg):
     out_dir = cfg["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
 
-    train_ds = AudioDataset(cfg["data"]["train_ok_glob"], label=0, cfg=cfg)
-    val_ds = AudioDataset(cfg["data"]["val_ok_glob"], label=0, cfg=cfg)
-    test_ok_ds = AudioDataset(cfg["data"]["test_ok_glob"], label=0, cfg=cfg)
-    test_ng_ds = AudioDataset(cfg["data"]["test_ng_glob"], label=1, cfg=cfg)
+    # ====== DataLoaders (AE eval.pyと同じ流れを維持) ======
+    train_loader, train_ds = create_loader(cfg["data"]["train_ok_glob"], label=0, cfg=cfg, shuffle=False)
+    val_loader, val_ds = create_loader(cfg["data"]["val_ok_glob"], label=0, cfg=cfg, shuffle=False)
+    test_ok_loader, test_ok_ds = create_loader(cfg["data"]["test_ok_glob"], label=0, cfg=cfg, shuffle=False)
+    test_ng_loader, test_ng_ds = create_loader(cfg["data"]["test_ng_glob"], label=1, cfg=cfg, shuffle=False)
 
+    # ====== BYOL-Aモデル作成・重みロード ======
     byol_cfg = cfg.get("byol", {})
     n_mels = int(cfg.get("feature", {}).get("logmel", {}).get("n_mels", byol_cfg.get("n_mels", 64)))
     feat_d = int(byol_cfg.get("feature_d", 2048))
     model = AudioNTT2020(n_mels=n_mels, d=feat_d).to(device)
 
-    ckpt_path = cfg.get("filenames", {}).get("checkpoint_best_full_path")
-    if not ckpt_path:
-        ckpt_path = os.path.join(out_dir, cfg["filenames"]["checkpoint_best"])
+    # warm-up forward（入力shape整合）
+    x0, _, _ = next(iter(train_loader))
+    _ = model(x0.to(device))
+
+    ckpt_path = _resolve_checkpoint_path(cfg)
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
     state = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(state["model"])
     model.eval()
 
-    train_emb, _, _, skipped_train = _extract_chunk_embeddings(train_ds.files, cfg, model, device)
-    val_emb, val_emb_by_file, val_paths, skipped_val = _extract_chunk_embeddings(val_ds.files, cfg, model, device)
-    test_ok_emb, test_ok_emb_by_file, test_ok_paths, skipped_ok = _extract_chunk_embeddings(test_ok_ds.files, cfg, model, device)
-    test_ng_emb, test_ng_emb_by_file, test_ng_paths, skipped_ng = _extract_chunk_embeddings(test_ng_ds.files, cfg, model, device)
+    # ====== Mahalanobis統計（main_get_mahala_stats.pyで保存したもの）をロード ======
+    stats_path = _resolve_stats_path(cfg)
+    if not os.path.exists(stats_path):
+        raise FileNotFoundError(f"Mahalanobis stats not found: {stats_path}")
 
-    # Mahalanobis計算ロジックは既存関数を流用
-    mu = train_emb.mean(dim=0).to(device)
-    xc = train_emb.to(device) - mu.unsqueeze(0)
-    cov = (xc.T @ xc) / max(1, train_emb.shape[0] - 1)
-    precision = cov_to_precision(
-        cov,
-        eps=float(cfg.get("mahala", {}).get("eps", 1e-6)),
-        use_pinv=bool(cfg.get("mahala", {}).get("use_pinv", True)),
-    ).to(device)
+    mahala_pack = torch.load(stats_path, map_location="cpu")
+    mu = mahala_pack["mean"].to(device=device, dtype=torch.float32)
+    precision = mahala_pack["precision"].to(device=device, dtype=torch.float32)
 
-    def file_scores(emb_list):
-        out = []
-        for emb in emb_list:
-            frame_scores = mahalanobis_distance(emb.to(device), mu, precision, sqrt=True).detach().cpu().numpy()
-            out.append(_aggregate(frame_scores, cfg))
-        return np.asarray(out, dtype=np.float64)
+    # ====== 埋め込み→Mahalanobis距離（ファイル単位） ======
+    _train_scores, _train_y, _train_paths = _score_loader(train_loader, model, mu, precision, device)
+    val_scores, _val_y, _val_paths = _score_loader(val_loader, model, mu, precision, device)
+    test_ok_scores, test_ok_y, test_ok_paths = _score_loader(test_ok_loader, model, mu, precision, device)
+    test_ng_scores, test_ng_y, test_ng_paths = _score_loader(test_ng_loader, model, mu, precision, device)
 
-    val_scores = file_scores(val_emb_by_file)
-    test_ok_scores = file_scores(test_ok_emb_by_file)
-    test_ng_scores = file_scores(test_ng_emb_by_file)
-
+    # ====== 良否判定 ======
     thr_cfg = cfg.get("threshold", {})
-    p = float(thr_cfg.get("val_percentile", 99.0))
-    threshold = float(np.percentile(val_scores, p))
+    method = thr_cfg.get("method", "p99_val_ok")
 
-    y_true = np.concatenate([
-        np.zeros_like(test_ok_scores, dtype=np.int64),
-        np.ones_like(test_ng_scores, dtype=np.int64),
-    ])
+    y_true = np.concatenate([test_ok_y, test_ng_y], axis=0)
     scores = np.concatenate([test_ok_scores, test_ng_scores], axis=0)
+
+    if method == "p99_val_ok":
+        threshold = float(np.percentile(val_scores, 99.0))
+    elif method == "youden_test":
+        from sklearn.metrics import roc_curve
+
+        fpr, tpr, thr_list = roc_curve(y_true, scores)
+        threshold = float(thr_list[np.argmax(tpr - fpr)])
+    elif method == "f1max_test":
+        thr_candidates = np.unique(scores)
+        best_f1, best_thr = -1.0, None
+        for t in thr_candidates:
+            y_pred_tmp = (scores >= t).astype(np.int64)
+            f1 = f1_score(y_true, y_pred_tmp)
+            if f1 > best_f1:
+                best_f1, best_thr = f1, t
+        threshold = float(best_thr)
+    else:
+        raise ValueError(f"Unknown threshold method: {method}")
+
     y_pred = (scores >= threshold).astype(np.int64)
 
     metrics = {
@@ -229,7 +165,7 @@ def run_eval(cfg):
 
     skip_log = Path(out_dir) / "skipped_wavs.log"
     with open(skip_log, "a", encoding="utf-8") as f:
-        for p, reason in (skipped_train + skipped_val + skipped_ok + skipped_ng):
+        for p, reason in (train_ds.skipped_files + val_ds.skipped_files + test_ok_ds.skipped_files + test_ng_ds.skipped_files):
             f.write(f"{p}\t{reason}\n")
 
     return str(score_path)
