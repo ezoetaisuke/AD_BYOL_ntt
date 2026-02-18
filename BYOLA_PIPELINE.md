@@ -1,55 +1,78 @@
-# BYOL-A 異常検知パイプライン（Mahalanobis）
+# BYOL-A 異常検知パイプライン（初心者向けガイド）
 
-## 1. 何を置き換えたか
-- `main_train.py` / `main_eval.py`（AEベース）とは別に、BYOL-A専用の実行入口を追加しました。
-  - 学習: `main_train_byola.py`
-  - 評価: `main_eval_byola.py`
-- 既存の `src/features.py` をそのまま使い、`feature.logmel` と `feature.crop` の挙動は同一です。
+## 1) 何を置き換えたの？
+- 旧: AE（再構成誤差ベース）
+- 新: BYOL-A（自己教師あり表現学習）
+- 判定は引き続き **Mahalanobis 距離** を使います。
 
-## 2. 時間情報を潰さない設計
-この実装は **例案1** を採用しています。
+実行入口:
+- 学習: `main_train_byola.py`
+- 評価: `main_eval_byola.py`
 
-1. 各wavから log-mel(+crop) を作る。
-2. `byola.time_embedding.chunk_sec / hop_sec` で時間チャンクに分割する。
-3. 各チャンクを BYOL-A Encoder (`AudioNTT2020Task6`) に通し、**時系列埋め込み `[T', D]`** を得る。
-4. 各時刻埋め込みで Mahalanobis 距離を計算し、距離系列を作る。
-5. 距離系列を `score_aggregate.method`（max / topk_mean / percentile / mean）で1スコアへ集約する。
+---
 
-> ファイル全体を最初から1ベクトルmean poolingして終わり、はしていません。
+## 2) 重要ポイント（時間情報を潰さない）
+1. wav → 既存 `src/features.py` の log-mel + crop（既存挙動そのまま）
+2. スペクトログラムを `chunk_sec` / `hop_sec` で時間チャンク化
+3. 各チャンクの埋め込み系列から Mahalanobis 距離系列を作る
+4. `score_aggregate`（`max`, `topk_mean`, `percentile`, `mean+std` など）で 1ファイル1スコア化
 
-## 3. pretrained / scratch の切替
-`configs/byola_config.yaml` の `byola.mode` で指定します。
+> 単純な全体 mean pooling をデフォルトにしない設計です。
 
-- `pretrained`
-  - BYOL-A 事前学習重みをロードして開始
-  - 必要なら `ssl_train.enable_in_pretrained: true` で自己教師あり継続学習
-- `scratch`
-  - BYOL-A をランダム初期化で開始
-  - 通常は `ssl_train.enable_in_scratch: true` で自己教師あり学習
+---
 
-## 4. pretrained時の resample / pad / trim 仕様
-`byola.pretrained_input` で制御します（**pretrained時のみ適用**）。
+## 3) pretrained / scratch の違い（とても重要）
 
-- `target_sr`: 入力fsが違うときのリサンプル先
-- `min_len`: これより短い波形をpad
-- `target_len`: 最終的に揃える長さ（短ければpad, 長ければtrim）
-- `pad_mode`: `zero` or `repeat`
-- `trim_mode`: `center` or `left`
+### pretrained
+- BYOL-A 事前学習重みから開始。
+- **このモードのみ** 以下を実施:
+  - 入力 SR が違えば `target_sr` へ resample
+  - 短ければ pad（`zero` or `repeat`）
+  - 長ければ trim（`center` or `left`）
 
-`scratch` のときは、上記の強制整形は行いません。
-（ただし log-mel計算に必要な最小長未満のwavはskipし、ログCSVへ記録します）
+### scratch
+- ランダム初期化で開始。
+- 原則、波形読み込み時の強制整形をしません。
+- 理由:
+  - 人為的な resample/pad による分布改変を避けるため
+  - 非定常・インパルスの時系列特性を維持しやすくするため
+- ただし安全策として、log-mel計算不可な短波形は skip して `errors.log` に記録します。
 
-## 5. 実行方法
+---
+
+## 4) 学習で保存されるもの
+`outputs/<run_id>/` に以下を保存:
+- `best.pth`（val_loss最小）
+- `last.pth`（最終epoch）
+- `loss_history.csv`
+- `loss_curve.png`
+- `maha_stats.npz`（`mu`, `cov`, `precision`）
+- `errors.log`
+
+評価時:
+- `scores.csv`（`path`, `score`, 任意で `threshold`, `y_pred`）
+
+---
+
+## 5) 実行手順
 ```bash
+# 1) 設定編集
+vim configs/byola_config.yaml
+
+# 2) 学習（train_ok + val_ok）
 python main_train_byola.py
+
+# 3) 評価（eval_glob）
 python main_eval_byola.py
 ```
 
-## 6. 生成物
-- 学習時
-  - `byola.save.stats_path`: Mahalanobis統計（mean, precision）
-  - `byola.save.encoder_path`: Encoder重み
-  - `byola.save.skip_log_path`: skipファイル一覧
-- 評価時
-  - `byola.save.eval_csv`: `path, score` 必須列（+ `y_pred`, `threshold` は設定時）
-  - `byola.save.skip_log_eval_path`: skipファイル一覧
+> `main_eval_byola.py` は `outputs/<run_id>/best.pth` と `maha_stats.npz` を読みます。  
+> 学習と同じ `run_id` を指定してください。
+
+---
+
+## 6) 置換後フロー（短く）
+1. BYOL-A を pretrained or scratch で用意
+2. train_ok / val_ok で自己教師あり学習（任意）
+3. train_ok の埋め込み列から Mahalanobis 統計推定
+4. eval wav をチャンク埋め込み化 → 距離系列 → 時間集約スコア

@@ -1,11 +1,13 @@
 import copy
 import glob
-import os
+import math
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import librosa
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import soundfile as sf
@@ -22,7 +24,7 @@ from .utils import ensure_dir, set_seed
 
 
 class RandomSpecAugment(nn.Module):
-    """BYOL学習で使う簡易Augment（軽量版）."""
+    """BYOL学習の2-view生成用の軽量Augment（スペクトログラムに適用）."""
 
     def __init__(self, noise_std: float, dropout_p: float):
         super().__init__()
@@ -49,7 +51,13 @@ class MLP(nn.Module):
 
 
 class BYOLSequenceWrapper(nn.Module):
-    """AudioNTT2020Task6([B,T,D])をBYOL損失で自己教師あり学習するための薄いラッパ."""
+    """
+    AudioNTT2020Task6（encoder）を BYOL の online/target で包む。
+
+    重要:
+    - スコア設計では「時間方向を潰さない」ため、推論側では frame/chunk の系列埋め込みを使う。
+    - ただし BYOL 損失自体は clip-level 比較のため、学習時のみ mean pooling を使う。
+    """
 
     def __init__(self, encoder: AudioNTT2020Task6, feature_dim: int, proj_dim: int, proj_hidden_dim: int, ema_decay: float):
         super().__init__()
@@ -60,6 +68,7 @@ class BYOLSequenceWrapper(nn.Module):
         self.target_encoder = copy.deepcopy(encoder)
         self.target_projector = MLP(feature_dim, proj_hidden_dim, proj_dim)
         self.target_projector.load_state_dict(self.online_projector.state_dict())
+
         for p in self.target_encoder.parameters():
             p.requires_grad = False
         for p in self.target_projector.parameters():
@@ -69,11 +78,10 @@ class BYOLSequenceWrapper(nn.Module):
 
     @staticmethod
     def _pool_seq(x: torch.Tensor) -> torch.Tensor:
-        # 学習目的では系列をclip表現に集約（score設計では使わない）
         return x.mean(dim=1)
 
     @torch.no_grad()
-    def update_target(self):
+    def update_target(self) -> None:
         for op, tp in zip(self.online_encoder.parameters(), self.target_encoder.parameters()):
             tp.data = self.ema_decay * tp.data + (1.0 - self.ema_decay) * op.data
         for op, tp in zip(self.online_projector.parameters(), self.target_projector.parameters()):
@@ -116,10 +124,30 @@ def _expand_globs(patterns) -> List[str]:
     return files
 
 
+def _pad_wave(y: np.ndarray, target_len: int, pad_mode: str) -> np.ndarray:
+    pad = target_len - len(y)
+    if pad <= 0:
+        return y
+    if pad_mode == "repeat":
+        reps = int(math.ceil(target_len / len(y))) if len(y) > 0 else 1
+        return np.tile(y, reps)[:target_len]
+    return np.pad(y, (0, pad), mode="constant")
+
+
 def _load_wave(path: str, cfg: Dict) -> PrepResult:
+    """
+    波形読み込みと前処理。
+
+    pretrained時のみ、BYOL-A事前学習の入力想定に厳密に合わせるため
+    resample/pad/trim を実施する。
+    scratch時は「強制整形しない」のが仕様:
+      - 分布を人為的に変えないため（過度な0埋め/リサンプルの混入を避ける）
+      - 既存収録条件の時系列特性をできるだけ保持するため
+    """
     byola_cfg = cfg["byola"]
     prep_cfg = byola_cfg.get("pretrained_input", {})
     mode = byola_cfg["mode"]
+
     try:
         y, sr = sf.read(path, dtype="float32", always_2d=True)
     except Exception as exc:
@@ -148,204 +176,357 @@ def _load_wave(path: str, cfg: Dict) -> PrepResult:
                     start = (len(y) - target_len) // 2
                 else:
                     start = 0
-                y = y[start : start + target_len]
+                y = y[start:start + target_len]
     else:
-        # scratch時は「強制整形しない」。log-mel最小条件だけチェックしてskipする。
+        # scratch は整形しない。log-melに必要な最小長だけ安全確認。
         min_required = int(cfg["feature"]["logmel"]["n_fft"])
         if len(y) < min_required:
             return PrepResult(None, None, f"too_short_for_logmel:{len(y)}<{min_required}")
+        # FeatureExtractor は cfg.audio.target_sr 前提で計算するため、
+        # scratchでは SR 不一致時はスキップしてログ化する。
+        if int(sr) != int(cfg["audio"]["target_sr"]):
+            return PrepResult(None, None, f"sr_mismatch_scratch:{sr}!={cfg['audio']['target_sr']}")
 
     return PrepResult(y.astype(np.float32), int(sr), None)
 
 
-def _pad_wave(y: np.ndarray, target_len: int, pad_mode: str) -> np.ndarray:
-    pad = target_len - len(y)
-    if pad <= 0:
-        return y
-    if pad_mode == "repeat":
-        reps = int(np.ceil(target_len / len(y)))
-        return np.tile(y, reps)[:target_len]
-    left = pad // 2
-    right = pad - left
-    return np.pad(y, (left, right), mode="constant")
+def _extract_feature(path: str, cfg: Dict, feat_cache: Dict[int, FeatureExtractor]) -> Tuple[Optional[np.ndarray], Optional[str], Optional[int]]:
+    prep = _load_wave(path, cfg)
+    if prep.waveform is None:
+        return None, prep.skip_reason, prep.sr
+
+    if prep.sr not in feat_cache:
+        feat_cfg = copy.deepcopy(cfg)
+        feat_cfg["audio"] = dict(cfg["audio"])
+        feat_cfg["audio"]["target_sr"] = int(prep.sr)
+        feat_cache[prep.sr] = FeatureExtractor(feat_cfg)
+
+    try:
+        feat = feat_cache[prep.sr](prep.waveform)  # [1,F,T]
+    except Exception as exc:
+        return None, f"feature_error:{exc}", prep.sr
+
+    if not np.isfinite(feat).all():
+        return None, "non_finite_feature", prep.sr
+    return feat.astype(np.float32), None, prep.sr
 
 
-def _feature_extractor_for_sr(cfg: Dict, sr: int, cache: Dict[int, FeatureExtractor]) -> FeatureExtractor:
-    # 既存features.pyの挙動を活かすため、srだけ差し替えたcfgでFeatureExtractorを再利用する。
-    if sr not in cache:
-        local_cfg = copy.deepcopy(cfg)
-        local_cfg["audio"]["target_sr"] = int(sr)
-        cache[sr] = FeatureExtractor(local_cfg)
-    return cache[sr]
+def _chunk_feature(feat: np.ndarray, cfg: Dict) -> List[np.ndarray]:
+    """[1,F,T] を chunk_sec/hop_sec で時間分割し、時間情報を保持する。"""
+    hop_length = int(cfg["feature"]["logmel"]["hop_length"])
+    sr = int(cfg["audio"]["target_sr"])
+    time_cfg = cfg["byola"]["time_embedding"]
 
+    chunk_frames = max(1, int(round(float(time_cfg["chunk_sec"]) * sr / hop_length)))
+    hop_frames = max(1, int(round(float(time_cfg["hop_sec"]) * sr / hop_length)))
 
-def _split_chunks(feat_1ft: np.ndarray, chunk_frames: int, hop_frames: int) -> List[np.ndarray]:
-    _, f, t = feat_1ft.shape
-    if chunk_frames <= 0 or chunk_frames >= t:
-        return [feat_1ft]
+    t_total = feat.shape[-1]
+    if t_total < chunk_frames:
+        pad = chunk_frames - t_total
+        feat = np.pad(feat, ((0, 0), (0, 0), (0, pad)), mode="constant")
+        t_total = feat.shape[-1]
+
     chunks: List[np.ndarray] = []
-    for st in range(0, t - chunk_frames + 1, max(1, hop_frames)):
-        chunks.append(feat_1ft[:, :, st : st + chunk_frames])
+    start = 0
+    while start + chunk_frames <= t_total:
+        chunks.append(feat[:, :, start:start + chunk_frames])
+        start += hop_frames
+
     if not chunks:
-        chunks.append(feat_1ft)
+        chunks = [feat[:, :, :chunk_frames]]
     return chunks
 
 
-def _extract_feature(path: str, cfg: Dict, feat_cache: Dict[int, FeatureExtractor]):
-    prep = _load_wave(path, cfg)
-    if prep.waveform is None:
-        return None, prep.skip_reason, None
-    feat = _feature_extractor_for_sr(cfg, prep.sr, feat_cache)(prep.waveform)
-    return feat, None, prep.sr
+def _build_encoder(cfg: Dict, device: torch.device) -> AudioNTT2020Task6:
+    model_cfg = cfg["byola"]["model"]
+    n_mels = int(cfg["feature"]["logmel"]["n_mels"])
+    d = int(model_cfg.get("feature_dim", 2048))
+    encoder = AudioNTT2020Task6(n_mels=n_mels, d=d).to(device)
+
+    if cfg["byola"]["mode"] == "pretrained":
+        weight_path = model_cfg["pretrained_weight_path"]
+        state = torch.load(weight_path, map_location=device)
+        encoder.load_state_dict(state, strict=True)
+        print(f"[INFO] Loaded pretrained BYOL-A weights: {weight_path}")
+    else:
+        print("[INFO] BYOL-A scratch mode: random initialization.")
+
+    return encoder
 
 
-def _extract_frame_embeddings(path: str, cfg: Dict, model: AudioNTT2020Task6, device: torch.device, feat_cache: Dict[int, FeatureExtractor]):
-    feat, reason, sr = _extract_feature(path, cfg, feat_cache)
+def _aggregate_time_scores(scores: np.ndarray, agg_cfg: Dict) -> float:
+    method = str(agg_cfg.get("method", "topk_mean")).lower()
+    arr = np.asarray(scores, dtype=np.float64)
+    if arr.size == 0:
+        return float("nan")
+
+    if method == "max":
+        return float(np.max(arr))
+    if method == "mean":
+        return float(np.mean(arr))
+    if method in {"mean+std", "mean_std"}:
+        std_ratio = float(agg_cfg.get("std_ratio", 1.0))
+        return float(np.mean(arr) + std_ratio * np.std(arr))
+    if method == "percentile":
+        q = float(agg_cfg.get("percentile", 95.0))
+        return float(np.percentile(arr, q))
+    if method == "topk_mean":
+        r = float(agg_cfg.get("topk_ratio", 0.1))
+        k = max(1, int(round(arr.size * r)))
+        topk = np.partition(arr, -k)[-k:]
+        return float(np.mean(topk))
+
+    raise ValueError(f"Unsupported score_aggregate.method: {method}")
+
+
+def _extract_frame_embeddings(path: str, cfg: Dict, encoder: AudioNTT2020Task6, device: torch.device, feat_cache: Dict[int, FeatureExtractor]) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+    feat, reason, _ = _extract_feature(path, cfg, feat_cache)
     if feat is None:
         return None, reason
 
-    hop = int(cfg["feature"]["logmel"]["hop_length"])
-    seconds_per_frame = hop / float(sr)
-    time_cfg = cfg["byola"].get("time_embedding", {})
-    chunk_sec = float(time_cfg.get("chunk_sec", 0.0))
-    hop_sec = float(time_cfg.get("hop_sec", 0.0))
-    chunk_frames = int(round(chunk_sec / seconds_per_frame)) if chunk_sec > 0 else 0
-    hop_frames = int(round(hop_sec / seconds_per_frame)) if hop_sec > 0 else chunk_frames
+    chunks = _chunk_feature(feat, cfg)
+    batch = torch.from_numpy(np.stack(chunks, axis=0)).to(device)  # [N,1,F,T]
 
-    chunks = _split_chunks(feat, chunk_frames, hop_frames)
-
-    seq_list: List[torch.Tensor] = []
     with torch.no_grad():
-        for ch in chunks:
-            x = torch.from_numpy(ch).unsqueeze(0).to(device)  # [1,1,F,T]
-            seq = model(x)[0]  # [T',D]
-            seq_list.append(seq.cpu())
+        seq = encoder(batch)  # [N, T', D]
+        emb = seq.reshape(-1, seq.size(-1)).detach().cpu()
 
-    if not seq_list:
-        return None, "empty_embedding"
-    return torch.cat(seq_list, dim=0), None
+    return emb, None
 
 
-def _aggregate_time_scores(frame_scores: np.ndarray, cfg: Dict) -> float:
-    agg = cfg["byola"].get("score_aggregate", {})
-    method = agg.get("method", "max")
-    if method == "max":
-        return float(np.max(frame_scores))
-    if method == "mean":
-        return float(np.mean(frame_scores))
-    if method == "topk_mean":
-        ratio = float(agg.get("topk_ratio", 0.1))
-        k = max(1, int(np.ceil(len(frame_scores) * ratio)))
-        return float(np.mean(np.sort(frame_scores)[-k:]))
-    if method == "percentile":
-        p = float(agg.get("percentile", 95.0))
-        return float(np.percentile(frame_scores, p))
-    raise ValueError(f"Unsupported score aggregation: {method}")
+def _pack_batch(feats: List[np.ndarray], device: torch.device) -> torch.Tensor:
+    max_t = max(v.shape[-1] for v in feats)
+    packed = []
+    for v in feats:
+        pad = max_t - v.shape[-1]
+        if pad > 0:
+            v = np.pad(v, ((0, 0), (0, 0), (0, pad)), mode="constant")
+        packed.append(v)
+    return torch.from_numpy(np.stack(packed, axis=0)).to(device)
 
 
-def _build_encoder(cfg: Dict, device: torch.device) -> AudioNTT2020Task6:
-    byola_cfg = cfg["byola"]
-    model_cfg = byola_cfg["model"]
-    enc = AudioNTT2020Task6(n_mels=int(cfg["feature"]["logmel"]["n_mels"]), d=int(model_cfg.get("feature_dim", 2048))).to(device)
-    if byola_cfg["mode"] == "pretrained":
-        weight_path = model_cfg.get("pretrained_weight_path", "")
-        if not weight_path:
-            d = int(model_cfg.get("feature_dim", 2048))
-            weight_path = f"byol_a/pretrained_weights/AudioNTT2020-BYOLA-64x96d{d}.pth"
-        if not os.path.exists(weight_path):
-            raise FileNotFoundError(f"pretrained weight not found: {weight_path}")
-        enc.load_weight(weight_path, device=device, key_check=True)
-    return enc
+def _iterate_ssl_loss(files: List[str], cfg: Dict, wrapper: BYOLSequenceWrapper, aug: RandomSpecAugment, optimizer: Optional[optim.Optimizer], device: torch.device, feat_cache: Dict[int, FeatureExtractor], desc: str) -> Tuple[float, int, List[Tuple[str, str]]]:
+    train_mode = optimizer is not None
+    wrapper.train(mode=train_mode)
+
+    skipped: List[Tuple[str, str]] = []
+    losses: List[float] = []
+    batch_size = int(cfg["byola"]["ssl_train"].get("batch_size", 8))
+    batch_feats: List[np.ndarray] = []
+
+    bar = tqdm(files, desc=desc)
+    for path in bar:
+        feat, reason, _ = _extract_feature(path, cfg, feat_cache)
+        if feat is None:
+            skipped.append((path, str(reason)))
+            continue
+
+        chunks = _chunk_feature(feat, cfg)
+        batch_feats.extend(chunks)
+
+        while len(batch_feats) >= batch_size:
+            cur = batch_feats[:batch_size]
+            batch_feats = batch_feats[batch_size:]
+            x = _pack_batch(cur, device)
+            x1, x2 = aug(x), aug(x)
+
+            with torch.set_grad_enabled(train_mode):
+                loss = wrapper.loss(x1, x2)
+                if train_mode:
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    optimizer.step()
+                    wrapper.update_target()
+            losses.append(float(loss.item()))
+            bar.set_postfix(loss=f"{np.mean(losses):.4f}")
+
+    if len(batch_feats) >= 2:
+        x = _pack_batch(batch_feats, device)
+        x1, x2 = aug(x), aug(x)
+        with torch.set_grad_enabled(train_mode):
+            loss = wrapper.loss(x1, x2)
+            if train_mode:
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+                wrapper.update_target()
+        losses.append(float(loss.item()))
+
+    mean_loss = float(np.mean(losses)) if losses else float("inf")
+    return mean_loss, len(losses), skipped
 
 
-def _ssl_train_if_needed(cfg: Dict, encoder: AudioNTT2020Task6, device: torch.device, train_files: List[str]):
-    byola_cfg = cfg["byola"]
-    train_cfg = byola_cfg.get("ssl_train", {})
-    if byola_cfg["mode"] == "pretrained" and not bool(train_cfg.get("enable_in_pretrained", False)):
+def _save_loss_artifacts(history: List[Dict], out_run_dir: Path) -> None:
+    csv_path = out_run_dir / "loss_history.csv"
+    png_path = out_run_dir / "loss_curve.png"
+    ensure_dir(str(csv_path))
+
+    df = pd.DataFrame(history)
+    df.to_csv(csv_path, index=False)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(df["epoch"], df["train_loss"], marker="o", label="train_loss")
+    plt.plot(df["epoch"], df["val_loss"], marker="s", label="val_loss")
+    plt.xlabel("epoch")
+    plt.ylabel("BYOL loss")
+    plt.title("BYOL-A SSL learning curve")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(png_path, dpi=150)
+    plt.close()
+
+
+def _append_errors(errors_path: Path, rows: List[Tuple[str, str, str]]) -> None:
+    if not rows:
         return
-    if byola_cfg["mode"] == "scratch" and not bool(train_cfg.get("enable_in_scratch", True)):
+    ensure_dir(str(errors_path))
+    df = pd.DataFrame(rows, columns=["phase", "path", "reason"])
+    if errors_path.exists():
+        old = pd.read_csv(errors_path)
+        df = pd.concat([old, df], ignore_index=True)
+    df.to_csv(errors_path, index=False)
+
+
+def _ssl_train_if_needed(cfg: Dict, encoder: AudioNTT2020Task6, device: torch.device, train_files: List[str], val_files: List[str], out_run_dir: Path) -> None:
+    train_cfg = cfg["byola"]["ssl_train"]
+    mode = cfg["byola"]["mode"]
+
+    do_ssl = (mode == "scratch" and bool(train_cfg.get("enable_in_scratch", True))) or (
+        mode == "pretrained" and bool(train_cfg.get("enable_in_pretrained", False))
+    )
+    if not do_ssl:
+        print("[INFO] SSL training skipped by config.")
         return
 
     wrapper = BYOLSequenceWrapper(
-        encoder=encoder,
-        feature_dim=int(byola_cfg["model"].get("feature_dim", 2048)),
+        encoder,
+        feature_dim=int(cfg["byola"]["model"].get("feature_dim", 2048)),
         proj_dim=int(train_cfg.get("proj_dim", 256)),
         proj_hidden_dim=int(train_cfg.get("proj_hidden_dim", 1024)),
         ema_decay=float(train_cfg.get("ema_decay", 0.99)),
     ).to(device)
-    aug = RandomSpecAugment(float(train_cfg.get("augment_noise_std", 0.05)), float(train_cfg.get("augment_dropout", 0.1))).to(device)
-    optimizer = optim.Adam(wrapper.parameters(), lr=float(train_cfg.get("lr", 1e-4)), weight_decay=float(train_cfg.get("weight_decay", 1e-5)))
 
+    aug = RandomSpecAugment(
+        noise_std=float(train_cfg.get("augment_noise_std", 0.05)),
+        dropout_p=float(train_cfg.get("augment_dropout", 0.1)),
+    ).to(device)
+
+    optimizer = optim.Adam(
+        wrapper.parameters(),
+        lr=float(train_cfg.get("lr", 1e-4)),
+        weight_decay=float(train_cfg.get("weight_decay", 1e-5)),
+    )
+
+    sched_cfg = train_cfg.get("schedule", {})
+    plateau_cfg = sched_cfg.get("plateau", {})
+    use_plateau = bool(plateau_cfg.get("enable", True))
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=float(plateau_cfg.get("factor", 0.5)),
+        patience=int(plateau_cfg.get("patience", 5)),
+        min_lr=float(plateau_cfg.get("min_lr", 1e-8)),
+    ) if use_plateau else None
+
+    early_cfg = sched_cfg.get("early_stopping", {})
+    use_early = bool(early_cfg.get("enable", True))
+    early_patience = int(early_cfg.get("patience", 10))
+    min_delta = float(early_cfg.get("min_delta", 0.0))
+
+    best_val = float("inf")
+    best_epoch = 0
+    no_improve = 0
+    history: List[Dict] = []
     feat_cache: Dict[int, FeatureExtractor] = {}
-    batch_size = int(train_cfg.get("batch_size", 8))
-    epochs = int(train_cfg.get("epochs", 10))
+    error_rows: List[Tuple[str, str, str]] = []
 
-    def _pack_batch(feats: List[np.ndarray]) -> torch.Tensor:
-        max_t = max(v.shape[-1] for v in feats)
-        packed = []
-        for v in feats:
-            pad = max_t - v.shape[-1]
-            if pad > 0:
-                v = np.pad(v, ((0, 0), (0, 0), (0, pad)), mode="constant")
-            packed.append(v)
-        x = torch.from_numpy(np.stack(packed, axis=0)).to(device)  # [B,1,F,T]
-        return x
+    epochs = int(train_cfg.get("epochs", 10))
+    best_path = out_run_dir / "best.pth"
+    last_path = out_run_dir / "last.pth"
 
     for epoch in range(1, epochs + 1):
-        wrapper.train()
-        epoch_loss = 0.0
-        n_step = 0
-        bar = tqdm(train_files, desc=f"ssl_train epoch={epoch}")
-        batch_feats: List[np.ndarray] = []
-        for path in bar:
-            feat, reason, _ = _extract_feature(path, cfg, feat_cache)
-            if feat is None:
-                continue
-            batch_feats.append(feat)
-            if len(batch_feats) >= batch_size:
-                x = _pack_batch(batch_feats)
-                x1, x2 = aug(x), aug(x)
-                optimizer.zero_grad(set_to_none=True)
-                loss = wrapper.loss(x1, x2)
-                loss.backward()
-                optimizer.step()
-                wrapper.update_target()
-                epoch_loss += float(loss.item())
-                n_step += 1
-                bar.set_postfix(loss=f"{epoch_loss / max(1,n_step):.4f}")
-                batch_feats = []
+        train_loss, train_steps, train_skips = _iterate_ssl_loss(
+            train_files, cfg, wrapper, aug, optimizer, device, feat_cache, f"train epoch={epoch}"
+        )
+        val_loss, val_steps, val_skips = _iterate_ssl_loss(
+            val_files, cfg, wrapper, aug, None, device, feat_cache, f"val epoch={epoch}"
+        )
 
-        if len(batch_feats) >= 2:
-            x = _pack_batch(batch_feats)
-            x1, x2 = aug(x), aug(x)
-            optimizer.zero_grad(set_to_none=True)
-            loss = wrapper.loss(x1, x2)
-            loss.backward()
-            optimizer.step()
-            wrapper.update_target()
-            epoch_loss += float(loss.item())
-            n_step += 1
+        cur_lr = float(optimizer.param_groups[0]["lr"])
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "train_steps": train_steps,
+            "val_steps": val_steps,
+            "lr": cur_lr,
+        })
 
-        if n_step > 0:
-            print(f"[ssl] epoch={epoch} loss={epoch_loss / n_step:.6f}")
+        print(
+            f"[EPOCH {epoch:03d}] train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+            f"train_steps={train_steps} val_steps={val_steps} lr={cur_lr:.3e}"
+        )
+
+        if scheduler is not None:
+            scheduler.step(val_loss)
+
+        improved = val_loss < (best_val - min_delta)
+        if improved:
+            best_val = val_loss
+            best_epoch = epoch
+            no_improve = 0
+            torch.save({"model": wrapper.online_encoder.state_dict(), "epoch": epoch, "cfg": cfg}, best_path)
+        else:
+            no_improve += 1
+
+        error_rows.extend([("train_ssl", p, r) for p, r in train_skips])
+        error_rows.extend([("val_ssl", p, r) for p, r in val_skips])
+
+        if use_early and no_improve >= early_patience:
+            print(f"[INFO] Early stopping at epoch={epoch} (best_epoch={best_epoch}, best_val={best_val:.6f})")
+            break
+
+    torch.save({"model": wrapper.online_encoder.state_dict(), "epoch": history[-1]["epoch"], "cfg": cfg}, last_path)
+    _save_loss_artifacts(history, out_run_dir)
+    _append_errors(out_run_dir / "errors.log", error_rows)
+
+    # 学習済みの online encoder を本体へ戻す
+    encoder.load_state_dict(wrapper.online_encoder.state_dict(), strict=True)
+
+    print(f"[SUMMARY] SSL done. epochs={len(history)} best_epoch={best_epoch} best_val={best_val:.6f}")
+    print(f"[SUMMARY] best={best_path} last={last_path} history={out_run_dir / 'loss_history.csv'}")
+
+
+def _resolve_run_dir(cfg: Dict) -> Path:
+    base_dir = Path(cfg.get("output_root", "outputs"))
+    run_id = cfg.get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = base_dir / run_id
+    ensure_dir(str(run_dir / "dummy.txt"))
+    return run_dir
+
 
 def run_train_byola(cfg: Dict) -> str:
     set_seed(int(cfg.get("seed", 42)))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
 
+    run_dir = _resolve_run_dir(cfg)
     train_files = _expand_globs(cfg["data"]["train_ok_glob"])
+    val_files = _expand_globs(cfg["data"]["val_ok_glob"])
+
     encoder = _build_encoder(cfg, device)
-    _ssl_train_if_needed(cfg, encoder, device, train_files)
+    _ssl_train_if_needed(cfg, encoder, device, train_files, val_files, run_dir)
     encoder.eval()
 
     feat_cache: Dict[int, FeatureExtractor] = {}
     embed_list: List[torch.Tensor] = []
-    skipped: List[Tuple[str, str]] = []
+    errors: List[Tuple[str, str, str]] = []
+
     for path in tqdm(train_files, desc="collect_train_embeddings"):
         emb, reason = _extract_frame_embeddings(path, cfg, encoder, device, feat_cache)
         if emb is None:
-            skipped.append((path, str(reason)))
+            errors.append(("maha_train", path, str(reason)))
             continue
         embed_list.append(emb)
 
@@ -360,28 +541,37 @@ def run_train_byola(cfg: Dict) -> str:
     mahala_cfg = cfg["byola"].get("mahalanobis", {})
     if bool(mahala_cfg.get("diag_only", False)):
         cov = torch.diag(torch.diag(cov))
-    precision = cov_to_precision(cov, eps=float(mahala_cfg.get("eps", 1e-6)), use_pinv=bool(mahala_cfg.get("use_pinv", True)))
+    precision = cov_to_precision(
+        cov,
+        eps=float(mahala_cfg.get("eps", 1e-6)),
+        use_pinv=bool(mahala_cfg.get("use_pinv", True)),
+    )
 
-    out_dir = Path(cfg["output_dir"])
-    stats_path = out_dir / cfg["byola"]["save"]["stats_path"]
-    model_path = out_dir / cfg["byola"]["save"]["encoder_path"]
-    skip_log_path = out_dir / cfg["byola"]["save"].get("skip_log_path", "skip_train.csv")
+    npz_path = run_dir / "maha_stats.npz"
+    np.savez(
+        npz_path,
+        mu=mu.detach().cpu().numpy(),
+        cov=cov.detach().cpu().numpy(),
+        precision=precision.detach().cpu().numpy(),
+        n_embeddings=int(all_emb.size(0)),
+        feature_dim=int(all_emb.size(1)),
+        mode=cfg["byola"]["mode"],
+    )
 
-    ensure_dir(str(stats_path))
-    torch.save({
-        "mean": mu.detach().cpu(),
-        "precision": precision.detach().cpu(),
-        "mode": cfg["byola"]["mode"],
-        "n_embeddings": int(all_emb.size(0)),
-        "feature_dim": int(all_emb.size(1)),
-        "cfg": cfg,
-    }, stats_path)
-    torch.save({"model": encoder.state_dict(), "cfg": cfg}, model_path)
+    # SSLを実行しない場合でも、互換のために best/last を保存しておく
+    best_path = run_dir / "best.pth"
+    last_path = run_dir / "last.pth"
+    if not best_path.exists():
+        torch.save({"model": encoder.state_dict(), "epoch": 0, "cfg": cfg}, best_path)
+    if not last_path.exists():
+        torch.save({"model": encoder.state_dict(), "epoch": 0, "cfg": cfg}, last_path)
 
-    pd.DataFrame(skipped, columns=["path", "reason"]).to_csv(skip_log_path, index=False)
-    print(f"[SUMMARY] train_files={len(train_files)} used={len(embed_list)} skipped={len(skipped)}")
-    print(f"[SUMMARY] stats_saved={stats_path} model_saved={model_path}")
-    return str(stats_path)
+    _append_errors(run_dir / "errors.log", errors)
+
+    print(f"[SUMMARY] run_dir={run_dir}")
+    print(f"[SUMMARY] train_files={len(train_files)} used={len(embed_list)} skipped={len(errors)}")
+    print(f"[SUMMARY] saved: best.pth last.pth maha_stats.npz")
+    return str(run_dir)
 
 
 def run_eval_byola(cfg: Dict) -> str:
@@ -389,49 +579,55 @@ def run_eval_byola(cfg: Dict) -> str:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
 
+    run_dir = _resolve_run_dir(cfg)
     encoder = _build_encoder(cfg, device)
-    model_path = Path(cfg["output_dir"]) / cfg["byola"]["save"]["encoder_path"]
-    if model_path.exists():
-        state = torch.load(model_path, map_location=device)
-        encoder.load_state_dict(state["model"])
+
+    best_path = run_dir / "best.pth"
+    last_path = run_dir / "last.pth"
+    model_path = best_path if best_path.exists() else last_path
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {best_path} or {last_path}")
+    state = torch.load(model_path, map_location=device)
+    encoder.load_state_dict(state["model"], strict=True)
     encoder.eval()
 
-    stats_path = Path(cfg["output_dir"]) / cfg["byola"]["save"]["stats_path"]
-    pack = torch.load(stats_path, map_location=device)
-    mu = pack["mean"].to(device=device, dtype=torch.float32)
-    precision = pack["precision"].to(device=device, dtype=torch.float32)
+    stats_path = run_dir / "maha_stats.npz"
+    if not stats_path.exists():
+        raise FileNotFoundError(f"Mahalanobis stats not found: {stats_path}")
+    pack = np.load(stats_path)
+    mu = torch.from_numpy(pack["mu"]).to(device=device, dtype=torch.float32)
+    precision = torch.from_numpy(pack["precision"]).to(device=device, dtype=torch.float32)
 
     files = _expand_globs(cfg["data"]["eval_glob"])
     feat_cache: Dict[int, FeatureExtractor] = {}
     rows = []
-    skipped: List[Tuple[str, str]] = []
+    errors: List[Tuple[str, str, str]] = []
 
     for path in tqdm(files, desc="eval"):
         emb, reason = _extract_frame_embeddings(path, cfg, encoder, device, feat_cache)
         if emb is None:
-            skipped.append((path, str(reason)))
+            errors.append(("eval", path, str(reason)))
             continue
+
         frame_scores = mahalanobis_distance(emb.to(device), mu, precision, sqrt=True).detach().cpu().numpy()
-        score = _aggregate_time_scores(frame_scores, cfg)
+        score = _aggregate_time_scores(frame_scores, cfg["byola"]["score_aggregate"])
         rows.append({"path": path, "score": float(score), "n_frames": int(len(frame_scores))})
 
     if not rows:
         raise RuntimeError("No valid evaluation samples.")
 
     score_df = pd.DataFrame(rows)
-    thr_cfg = cfg["byola"].get("threshold", {})
-    threshold = thr_cfg.get("value")
+    threshold = cfg["byola"].get("threshold", {}).get("value")
     if threshold is not None:
         threshold = float(threshold)
         score_df["threshold"] = threshold
         score_df["y_pred"] = (score_df["score"] >= threshold).astype(int)
 
-    out_dir = Path(cfg["output_dir"])
-    out_csv = out_dir / cfg["byola"]["save"]["eval_csv"]
-    skip_log_path = out_dir / cfg["byola"]["save"].get("skip_log_eval_path", "skip_eval.csv")
+    out_csv = run_dir / "scores.csv"
     ensure_dir(str(out_csv))
     score_df.to_csv(out_csv, index=False)
-    pd.DataFrame(skipped, columns=["path", "reason"]).to_csv(skip_log_path, index=False)
+    _append_errors(run_dir / "errors.log", errors)
 
-    print(f"[SUMMARY] eval_files={len(files)} scored={len(rows)} skipped={len(skipped)} csv={out_csv}")
+    print(f"[SUMMARY] run_dir={run_dir}")
+    print(f"[SUMMARY] eval_files={len(files)} scored={len(rows)} skipped={len(errors)} csv={out_csv}")
     return str(out_csv)
