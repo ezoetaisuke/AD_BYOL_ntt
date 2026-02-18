@@ -17,12 +17,54 @@ from .utils import ensure_dir, plot_learning_curve, save_metrics_csv, set_seed
 class RandomSpecAugment(nn.Module):
     """Simple stochastic augment for log-mel spectrogram batches."""
 
-    def __init__(self, noise_std=0.05, dropout_p=0.1):
+    def __init__(
+        self,
+        noise_std: float = 0.05,
+        dropout_p: float = 0.1,
+        enable_freq_mask: bool = True,
+        enable_time_mask: bool = True,
+        freq_mask_ratio: float = 0.15,
+        time_mask_ratio: float = 0.15,
+    ):
         super().__init__()
         self.noise_std = float(noise_std)
         self.dropout = nn.Dropout2d(p=float(dropout_p))
+        self.enable_freq_mask = bool(enable_freq_mask)
+        self.enable_time_mask = bool(enable_time_mask)
+        self.freq_mask_ratio = max(0.0, min(1.0, float(freq_mask_ratio)))
+        self.time_mask_ratio = max(0.0, min(1.0, float(time_mask_ratio)))
+
+    @staticmethod
+    def _mask_along_axis(x: torch.Tensor, axis: int, ratio: float) -> torch.Tensor:
+        if ratio <= 0.0:
+            return x
+
+        axis_size = x.size(axis)
+        if axis_size <= 1:
+            return x
+
+        max_width = max(1, int(round(axis_size * ratio)))
+        batch_size = x.size(0)
+        for b in range(batch_size):
+            width = int(torch.randint(1, max_width + 1, (1,), device=x.device).item())
+            start_max = axis_size - width
+            start = int(torch.randint(0, start_max + 1, (1,), device=x.device).item())
+
+            if axis == 2:
+                x[b, :, start:start + width, :] = 0.0
+            elif axis == 3:
+                x[b, :, :, start:start + width] = 0.0
+
+        return x
 
     def forward(self, x):
+        x = x.clone()
+        # 入力shape想定: [B, C, F, T]
+        if self.enable_freq_mask:
+            x = self._mask_along_axis(x, axis=2, ratio=self.freq_mask_ratio)
+        if self.enable_time_mask:
+            x = self._mask_along_axis(x, axis=3, ratio=self.time_mask_ratio)
+
         x = self.dropout(x)
         noise = torch.randn_like(x) * self.noise_std
         return x + noise
@@ -126,9 +168,14 @@ def run_train(cfg):
         ema_decay=float(byol_cfg.get("ema_decay", 0.99)),
     ).to(device)
 
+    spec_cfg = byol_cfg.get("spec_augment", {})
     aug = RandomSpecAugment(
         noise_std=float(byol_cfg.get("augment_noise_std", 0.05)),
         dropout_p=float(byol_cfg.get("augment_dropout", 0.1)),
+        enable_freq_mask=bool(spec_cfg.get("freq_mask_enable", False)),
+        enable_time_mask=bool(spec_cfg.get("time_mask_enable", False)),
+        freq_mask_ratio=float(spec_cfg.get("freq_mask_ratio", 0.15)),
+        time_mask_ratio=float(spec_cfg.get("time_mask_ratio", 0.15)),
     ).to(device)
 
     optimizer = optim.Adam(

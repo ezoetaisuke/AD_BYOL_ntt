@@ -98,6 +98,11 @@ byola:
     ema_decay: 0.99
     augment_noise_std: 0.05
     augment_dropout: 0.10
+    spec_augment:
+      freq_mask_enable: false
+      time_mask_enable: false
+      freq_mask_ratio: 0.15
+      time_mask_ratio: 0.15
 
     schedule:
       plateau:
