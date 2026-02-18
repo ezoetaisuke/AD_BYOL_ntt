@@ -26,12 +26,54 @@ from .utils import ensure_dir, set_seed
 class RandomSpecAugment(nn.Module):
     """BYOL学習の2-view生成用の軽量Augment（スペクトログラムに適用）."""
 
-    def __init__(self, noise_std: float, dropout_p: float):
+    def __init__(
+        self,
+        noise_std: float,
+        dropout_p: float,
+        enable_freq_mask: bool = True,
+        enable_time_mask: bool = True,
+        freq_mask_ratio: float = 0.15,
+        time_mask_ratio: float = 0.15,
+    ):
         super().__init__()
         self.noise_std = float(noise_std)
         self.dropout = nn.Dropout2d(p=float(dropout_p))
+        self.enable_freq_mask = bool(enable_freq_mask)
+        self.enable_time_mask = bool(enable_time_mask)
+        self.freq_mask_ratio = max(0.0, min(1.0, float(freq_mask_ratio)))
+        self.time_mask_ratio = max(0.0, min(1.0, float(time_mask_ratio)))
+
+    @staticmethod
+    def _mask_along_axis(x: torch.Tensor, axis: int, ratio: float) -> torch.Tensor:
+        if ratio <= 0.0:
+            return x
+
+        axis_size = x.size(axis)
+        if axis_size <= 1:
+            return x
+
+        max_width = max(1, int(round(axis_size * ratio)))
+        batch_size = x.size(0)
+        for b in range(batch_size):
+            width = int(torch.randint(1, max_width + 1, (1,), device=x.device).item())
+            start_max = axis_size - width
+            start = int(torch.randint(0, start_max + 1, (1,), device=x.device).item())
+
+            if axis == 2:
+                x[b, :, start:start + width, :] = 0.0
+            elif axis == 3:
+                x[b, :, :, start:start + width] = 0.0
+
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.clone()
+        # 入力shape想定: [B, C, F, T]
+        if self.enable_freq_mask:
+            x = self._mask_along_axis(x, axis=2, ratio=self.freq_mask_ratio)
+        if self.enable_time_mask:
+            x = self._mask_along_axis(x, axis=3, ratio=self.time_mask_ratio)
+
         x = self.dropout(x)
         return x + torch.randn_like(x) * self.noise_std
 
@@ -407,9 +449,14 @@ def _ssl_train_if_needed(cfg: Dict, encoder: AudioNTT2020Task6, device: torch.de
         ema_decay=float(train_cfg.get("ema_decay", 0.99)),
     ).to(device)
 
+    spec_cfg = train_cfg.get("spec_augment", {})
     aug = RandomSpecAugment(
         noise_std=float(train_cfg.get("augment_noise_std", 0.05)),
         dropout_p=float(train_cfg.get("augment_dropout", 0.1)),
+        enable_freq_mask=bool(spec_cfg.get("freq_mask_enable", False)),
+        enable_time_mask=bool(spec_cfg.get("time_mask_enable", False)),
+        freq_mask_ratio=float(spec_cfg.get("freq_mask_ratio", 0.15)),
+        time_mask_ratio=float(spec_cfg.get("time_mask_ratio", 0.15)),
     ).to(device)
 
     optimizer = optim.Adam(
