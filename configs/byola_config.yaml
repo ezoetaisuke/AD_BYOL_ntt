@@ -1,12 +1,16 @@
 seed: 42
-output_dir: ./result/byola
+
+# すべての成果物は outputs/<run_id>/ に保存
+output_root: outputs
+run_id: byola_sample_run
 
 audio:
+  # FeatureExtractor互換のための既存キー
   target_sr: 48000
   to_mono: true
 
 feature:
-  # 既存features.pyのキーをそのまま利用（log-mel + crop互換）
+  # 既存 features.py のキーをそのまま利用（log-mel + crop挙動を踏襲）
   type: logmel
   target_frames: null
   normalize:
@@ -37,63 +41,71 @@ feature:
 data:
   train_ok_glob:
     - /path/to/train_ok/*.wav
+  val_ok_glob:
+    - /path/to/val_ok/*.wav
   eval_glob:
     - /path/to/eval/*.wav
 
 byola:
-  # 必須: pretrained / scratch を切り替える
+  # 必須: pretrained / scratch
   mode: pretrained
 
   model:
     feature_dim: 2048
     pretrained_weight_path: byol_a/pretrained_weights/AudioNTT2020-BYOLA-64x96d2048.pth
 
-  # pretrainedモード専用の波形整形設定（scratchでは使わない）
+  # pretrainedモード専用: resample/pad/trim
   pretrained_input:
     target_sr: 48000
     min_len: 48000
     target_len: 96000
-    pad_mode: zero   # zero / repeat
+    pad_mode: zero    # zero / repeat
     trim_mode: center # center / left
 
-  # 時間情報を保持するため、ファイルをチャンク分割して系列埋め込みを作る
+  # 時間情報を潰さないためのチャンク設定
   time_embedding:
     chunk_sec: 0.5
     hop_sec: 0.25
 
-  # フレーム距離系列 -> 1ファイルスコア への集約
+  # 距離系列 -> 1ファイルスコア
   score_aggregate:
-    method: topk_mean # max / mean / topk_mean / percentile
+    method: topk_mean   # max / topk_mean / percentile / mean+std / mean
     topk_ratio: 0.1
     percentile: 95.0
+    std_ratio: 1.0
 
   mahalanobis:
     eps: 1.0e-6
     use_pinv: true
     diag_only: false
 
-  # thresholdを与えると y_pred 列をCSVに追加
   threshold:
     value: null
 
   ssl_train:
-    # pretrained開始時は通常OFF（埋め込み抽出のみ）
-    enable_in_pretrained: false
-    # scratch開始時は通常ON
+    # pretrained時は必要に応じてON（継続自己教師あり）
+    enable_in_pretrained: true
+    # scratch時は通常ON
     enable_in_scratch: true
-    epochs: 10
+
+    epochs: 20
     batch_size: 8
     lr: 1.0e-4
     weight_decay: 1.0e-5
+
     proj_dim: 256
     proj_hidden_dim: 1024
     ema_decay: 0.99
     augment_noise_std: 0.05
-    augment_dropout: 0.1
+    augment_dropout: 0.10
 
-  save:
-    stats_path: checkpoints/byola_mahala_stats.pt
-    encoder_path: checkpoints/byola_encoder.pt
-    eval_csv: scores/byola_scores.csv
-    skip_log_path: logs/skip_train.csv
-    skip_log_eval_path: logs/skip_eval.csv
+    schedule:
+      plateau:
+        enable: true
+        factor: 0.5
+        patience: 5
+        min_lr: 1.0e-8
+      early_stopping:
+        enable: true
+        patience: 10
+        min_delta: 0.0
