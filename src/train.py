@@ -1,9 +1,11 @@
 import copy
 import os
 
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
 from byol_a.byol_a.models import AudioNTT2020
@@ -21,7 +23,6 @@ class RandomSpecAugment(nn.Module):
         self.dropout = nn.Dropout2d(p=float(dropout_p))
 
     def forward(self, x):
-        # x: [B, 1, F, T]
         x = self.dropout(x)
         noise = torch.randn_like(x) * self.noise_std
         return x + noise
@@ -84,7 +85,7 @@ class BYOLWrapper(nn.Module):
 
 
 def _resolve_pretrained_path(cfg):
-    byol_cfg = cfg.get("model", {}).get("byol_a", {})
+    byol_cfg = cfg.get("byol", {})
     path = byol_cfg.get("pretrained_weight_path")
     if path:
         return path
@@ -94,21 +95,24 @@ def _resolve_pretrained_path(cfg):
 
 
 def run_train(cfg):
+    """
+    既存AE学習ループの入出力は維持しつつ、モデル本体のみBYOL-Aへ置換。
+    """
     set_seed(cfg["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if cfg.get("model", {}).get("type") != "byol_a":
         raise ValueError("Only model.type='byol_a' is supported.")
 
-    train_loader, _ = create_loader(cfg["data"]["train_ok_glob"], label=0, cfg=cfg, shuffle=True, drop_last=True)
-    val_loader, _ = create_loader(cfg["data"]["val_ok_glob"], label=0, cfg=cfg, shuffle=False, drop_last=False)
+    train_loader, train_ds = create_loader(cfg["data"]["train_ok_glob"], label=0, cfg=cfg, shuffle=True, drop_last=True)
+    val_loader, val_ds = create_loader(cfg["data"]["val_ok_glob"], label=0, cfg=cfg, shuffle=False, drop_last=False)
 
-    byol_cfg = cfg.get("model", {}).get("byol_a", {})
+    byol_cfg = cfg.get("byol", {})
     n_mels = int(cfg.get("feature", {}).get("logmel", {}).get("n_mels", byol_cfg.get("n_mels", 64)))
     feat_d = int(byol_cfg.get("feature_d", 2048))
     encoder = AudioNTT2020(n_mels=n_mels, d=feat_d).to(device)
 
-    if bool(byol_cfg.get("use_pretrained", True)):
+    if str(byol_cfg.get("mode", "pretrained")).lower() == "pretrained":
         weight_path = _resolve_pretrained_path(cfg)
         if not os.path.exists(weight_path):
             raise FileNotFoundError(f"BYOL-A pretrained weight not found: {weight_path}")
@@ -134,12 +138,32 @@ def run_train(cfg):
         weight_decay=float(cfg["train"].get("weight_decay", 0.0)),
     )
 
+    plateau_cfg = cfg.get("schedule", {}).get("plateau", {})
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=float(plateau_cfg.get("factor", 0.5)),
+        patience=int(plateau_cfg.get("patience", 5)),
+        min_lr=float(plateau_cfg.get("min_lr", 1.0e-10)),
+    )
+
+    es_cfg = cfg.get("schedule", {}).get("early_stopping", {})
+    es_patience = int(es_cfg.get("patience", 10))
+    no_improve = 0
+
     out_dir = cfg["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
     ckpt_path = os.path.join(out_dir, cfg["filenames"]["checkpoint_best"])
     metrics_csv = os.path.join(out_dir, cfg["filenames"]["metrics_csv"])
     lc_png = os.path.join(out_dir, cfg["filenames"]["learning_curve_png"])
+    # BYOL専用の履歴名も追加（既存metrics.csvは互換維持）
+    loss_history_csv = os.path.join(out_dir, "loss_history.csv")
     ensure_dir(ckpt_path)
+
+    skip_log = os.path.join(out_dir, "skipped_wavs.log")
+    with open(skip_log, "w", encoding="utf-8") as f:
+        for p, reason in (train_ds.skipped_files + val_ds.skipped_files):
+            f.write(f"{p}\t{reason}\n")
 
     history = []
     best_val = float("inf")
@@ -172,16 +196,25 @@ def run_train(cfg):
 
         train_loss = train_loss_sum / max(1, n_train)
         val_loss = val_loss_sum / max(1, n_val)
+        scheduler.step(val_loss)
+
         rec = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "lr": optimizer.param_groups[0]["lr"]}
         history.append(rec)
         save_metrics_csv(metrics_csv, history)
+        pd.DataFrame(history).to_csv(loss_history_csv, index=False)
         plot_learning_curve(lc_png, history)
 
         if val_loss < best_val:
             best_val = val_loss
+            no_improve = 0
             torch.save({"model": model.online_encoder.state_dict(), "cfg": cfg}, ckpt_path)
+        else:
+            no_improve += 1
 
         print(f"[Epoch {epoch}] train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+        if no_improve >= es_patience:
+            print(f"Early stopping: no val improvement for {es_patience} epochs")
+            break
 
     print(f"Training done. best checkpoint: {ckpt_path}")
     return ckpt_path

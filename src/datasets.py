@@ -57,6 +57,7 @@ class AudioDataset(Dataset):
         # ファイル順序を固定（同じ入力に対して順番がブレないようにする）
         # ※ DataLoader の shuffle=True を使う場合は、ここでの順序は初期順としてのみ意味がある
         self.files = sorted(self.files)
+        self.skipped_files = []
         
         # このDatasetが返す label は全サンプルで固定（OK用Dataset/NG用Datasetを分けて作る設計）
         self.label = label
@@ -67,7 +68,9 @@ class AudioDataset(Dataset):
         #   - resample_if_mismatch: sr不一致時にリサンプルするか（Falseなら即エラー）
         #   - to_mono: Trueなら多ch→モノラル（平均）にする
         self.sr = cfg["audio"]["target_sr"]
-        self.resample = cfg["audio"]["resample_if_mismatch"]
+        byol_mode = str(cfg.get("byol", {}).get("mode", "pretrained")).lower()
+        # pretrained時のみ入力制約に合わせる（要件）。scratch時は既存挙動を優先する。
+        self.resample = bool(cfg["audio"]["resample_if_mismatch"]) if byol_mode == "pretrained" else False
         self.to_mono = cfg["audio"]["to_mono"]
 
         # 特徴抽出器を生成（重い初期化があれば __getitem__ ごとに作らないためここで作る）
@@ -81,6 +84,17 @@ class AudioDataset(Dataset):
         # 参照用の基準（長さ・sr）を最初のファイルで決める
         #   - soundfile.read(..., always_2d=True) なので y0 は [num_samples, channels] の2次元配列
         #   - ここで決めた ref_len を後続ファイルにも要求する（expect_same_length=true の場合）
+        valid_files = []
+        for p in self.files:
+            try:
+                sf.info(p)
+                valid_files.append(p)
+            except Exception as exc:
+                self.skipped_files.append((p, f"read_error:{exc}"))
+        self.files = valid_files
+        if not self.files:
+            raise RuntimeError("All wav files are unreadable for pattern(s): " + str(file_globs))
+
         y0, sr0 = sf.read(self.files[0], dtype="float32", always_2d=True)
         
         # モノラル化の方針：
@@ -103,12 +117,25 @@ class AudioDataset(Dataset):
         #   - __getitem__ で len(y)==ref_len をチェックし、固定長前提を守る（設定により）
         self.ref_len = len(y0)
         self.fixed_seconds = self.cfg.get("audio", {}).get("fixed_seconds", None)
-        if self.fixed_seconds is None:
-            model_cfg = self.cfg.get("model", {})
-            byol_cfg = model_cfg.get("byol_a", {})
-            if model_cfg.get("type") == "byol_a" and bool(byol_cfg.get("use_pretrained", False)):
-                self.fixed_seconds = float(byol_cfg.get("unit_sec", 0.95))
-        self.fixed_length = None
+        byol_cfg = self.cfg.get("byol", {})
+        prep_cfg = byol_cfg.get("pretrained_input", {})
+        if self.fixed_seconds is None and byol_mode == "pretrained":
+            # 既存実装への最小差分として sec 指定を length 指定へマッピング
+            target_len = prep_cfg.get("target_len", None)
+            if target_len is not None:
+                self.fixed_length = int(target_len)
+            else:
+                self.fixed_length = None
+        else:
+            self.fixed_length = None
+
+        self.min_length = None
+        if byol_mode == "pretrained":
+            self.min_length = int(prep_cfg.get("min_len", 0)) if prep_cfg.get("min_len", None) is not None else None
+
+        self.pad_mode = str(prep_cfg.get("pad_mode", "zero")).lower()
+        self.trim_mode = str(prep_cfg.get("trim_mode", "center")).lower()
+
         if self.fixed_seconds is not None:
             self.fixed_length = int(round(float(self.fixed_seconds) * self.sr))
 
@@ -145,15 +172,22 @@ class AudioDataset(Dataset):
             else:
                 raise RuntimeError(f"Sampling rate mismatch in {path}")
 
+        # pretrained時のみ、min_lenを満たすようにpadする
+        if self.min_length is not None and len(y) < self.min_length:
+            pad = self.min_length - len(y)
+            if self.pad_mode == "repeat" and len(y) > 0:
+                rep = int(np.ceil(self.min_length / len(y)))
+                y = np.tile(y, rep)[:self.min_length]
+            else:
+                y = np.pad(y, (0, pad), mode="constant")
+
         # BYOL-A 事前学習モデルの制約に合わせるため、必要なら固定秒数へゼロ埋め/切り出し
         if self.fixed_length is not None:
             if len(y) < self.fixed_length:
                 pad = self.fixed_length - len(y)
-                left = pad // 2
-                right = pad - left
-                y = np.pad(y, (left, right), mode="constant")
+                y = np.pad(y, (0, pad), mode="constant")
             elif len(y) > self.fixed_length:
-                start = (len(y) - self.fixed_length) // 2
+                start = 0 if self.trim_mode == "left" else (len(y) - self.fixed_length) // 2
                 y = y[start:start + self.fixed_length]
 
         # 固定長チェック：
