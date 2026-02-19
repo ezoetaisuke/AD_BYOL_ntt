@@ -139,6 +139,17 @@ byol:
     time_mask_enable: false
     freq_mask_ratio: 0.15
     time_mask_ratio: 0.15
+  augmentation:
+    method: "random_specaugment"  # ["random_specaugment", "byola"]
+    byola:
+      enable_mixup: true
+      mixup_ratio: 0.4
+      log_mixup_exp: true
+      mixup_memory_size: 2048
+      enable_random_resize_crop: true
+      virtual_crop_scale: [1.0, 1.5]
+      freq_scale: [0.6, 1.5]
+      time_scale: [0.6, 1.5]
 
   # pretrained時のみ適用する入力整形（scratch時は強制しない）
   pretrained_input:
