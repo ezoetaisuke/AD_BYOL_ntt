@@ -8,6 +8,7 @@ from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
+from byol_a.byol_a.augmentations import MixupBYOLA, RandomResizeCrop
 from byol_a.byol_a.models import AudioNTT2020
 
 from .datasets import create_loader
@@ -68,6 +69,75 @@ class RandomSpecAugment(nn.Module):
         x = self.dropout(x)
         noise = torch.randn_like(x) * self.noise_std
         return x + noise
+
+
+class BYOLAAugmentation(nn.Module):
+    """BYOL-A公式の拡張（Mixup + RandomResizeCrop）をバッチ入力に適用する。"""
+
+    def __init__(
+        self,
+        enable_mixup: bool = True,
+        mixup_ratio: float = 0.4,
+        log_mixup_exp: bool = True,
+        mixup_memory_size: int = 2048,
+        enable_random_resize_crop: bool = True,
+        virtual_crop_scale=(1.0, 1.5),
+        freq_scale=(0.6, 1.5),
+        time_scale=(0.6, 1.5),
+    ):
+        super().__init__()
+        self.enable_mixup = bool(enable_mixup)
+        self.enable_random_resize_crop = bool(enable_random_resize_crop)
+        self.mixup = MixupBYOLA(
+            ratio=float(mixup_ratio),
+            n_memory=int(mixup_memory_size),
+            log_mixup_exp=bool(log_mixup_exp),
+        )
+        self.random_resize_crop = RandomResizeCrop(
+            virtual_crop_scale=tuple(virtual_crop_scale),
+            freq_scale=tuple(freq_scale),
+            time_scale=tuple(time_scale),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        augmented = []
+        for i in range(x.size(0)):
+            y = x[i]
+            if self.enable_mixup:
+                y = self.mixup(y)
+            if self.enable_random_resize_crop:
+                y = self.random_resize_crop(y)
+            augmented.append(y)
+        return torch.stack(augmented, dim=0)
+
+
+def build_augmentation_module(aug_cfg: dict, legacy_cfg: dict) -> nn.Module:
+    method = str(aug_cfg.get("method", "random_specaugment")).lower()
+    if method == "byola":
+        byola_cfg = aug_cfg.get("byola", {})
+        return BYOLAAugmentation(
+            enable_mixup=bool(byola_cfg.get("enable_mixup", True)),
+            mixup_ratio=float(byola_cfg.get("mixup_ratio", 0.4)),
+            log_mixup_exp=bool(byola_cfg.get("log_mixup_exp", True)),
+            mixup_memory_size=int(byola_cfg.get("mixup_memory_size", 2048)),
+            enable_random_resize_crop=bool(byola_cfg.get("enable_random_resize_crop", True)),
+            virtual_crop_scale=tuple(byola_cfg.get("virtual_crop_scale", [1.0, 1.5])),
+            freq_scale=tuple(byola_cfg.get("freq_scale", [0.6, 1.5])),
+            time_scale=tuple(byola_cfg.get("time_scale", [0.6, 1.5])),
+        )
+
+    if method != "random_specaugment":
+        raise ValueError(f"Unsupported byol.augmentation.method: {method}")
+
+    spec_cfg = legacy_cfg.get("spec_augment", {})
+    return RandomSpecAugment(
+        noise_std=float(legacy_cfg.get("augment_noise_std", 0.05)),
+        dropout_p=float(legacy_cfg.get("augment_dropout", 0.1)),
+        enable_freq_mask=bool(spec_cfg.get("freq_mask_enable", False)),
+        enable_time_mask=bool(spec_cfg.get("time_mask_enable", False)),
+        freq_mask_ratio=float(spec_cfg.get("freq_mask_ratio", 0.15)),
+        time_mask_ratio=float(spec_cfg.get("time_mask_ratio", 0.15)),
+    )
 
 
 class MLP(nn.Module):
@@ -168,15 +238,7 @@ def run_train(cfg):
         ema_decay=float(byol_cfg.get("ema_decay", 0.99)),
     ).to(device)
 
-    spec_cfg = byol_cfg.get("spec_augment", {})
-    aug = RandomSpecAugment(
-        noise_std=float(byol_cfg.get("augment_noise_std", 0.05)),
-        dropout_p=float(byol_cfg.get("augment_dropout", 0.1)),
-        enable_freq_mask=bool(spec_cfg.get("freq_mask_enable", False)),
-        enable_time_mask=bool(spec_cfg.get("time_mask_enable", False)),
-        freq_mask_ratio=float(spec_cfg.get("freq_mask_ratio", 0.15)),
-        time_mask_ratio=float(spec_cfg.get("time_mask_ratio", 0.15)),
-    ).to(device)
+    aug = build_augmentation_module(byol_cfg.get("augmentation", {}), byol_cfg).to(device)
 
     optimizer = optim.Adam(
         model.parameters(),
