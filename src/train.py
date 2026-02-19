@@ -1,6 +1,8 @@
 import copy
 import os
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -178,7 +180,7 @@ class BYOLWrapper(nn.Module):
         for op, tp in zip(self.online_projector.parameters(), self.target_projector.parameters()):
             tp.data = self.ema_decay * tp.data + (1.0 - self.ema_decay) * op.data
 
-    def loss(self, x1, x2):
+    def loss(self, x1, x2, return_debug_tensors: bool = False):
         z1 = self.online_projector(self.online_encoder(x1))
         z2 = self.online_projector(self.online_encoder(x2))
         p1 = self.online_predictor(z1)
@@ -193,7 +195,54 @@ class BYOLWrapper(nn.Module):
         t1 = F.normalize(t1, dim=-1)
         t2 = F.normalize(t2, dim=-1)
         loss = (2.0 - 2.0 * (p1 * t2).sum(dim=-1)) + (2.0 - 2.0 * (p2 * t1).sum(dim=-1))
-        return loss.mean()
+        if not return_debug_tensors:
+            return loss.mean()
+
+        debug_tensors = {
+            "z1": z1,
+            "z2": z2,
+            "p1": p1,
+            "p2": p2,
+            "t1": t1,
+            "t2": t2,
+        }
+        return loss.mean(), debug_tensors
+
+
+def _save_feature_debug_images(debug_dir: str, epoch: int, source_path: str, tensors: dict):
+    stem = Path(source_path).stem
+    save_dir = os.path.join(debug_dir, f"{epoch}_{stem}")
+    os.makedirs(save_dir, exist_ok=True)
+
+    tensor_2d_keys = ["x", "x1", "x2"]
+    tensor_1d_keys = ["z1", "z2", "p1", "p2", "t1", "t2"]
+
+    for key in tensor_2d_keys:
+        if key not in tensors:
+            continue
+        arr = tensors[key][0, 0].detach().cpu().float().numpy()
+        plt.figure(figsize=(8, 4))
+        plt.imshow(arr, aspect="auto", origin="lower", cmap="viridis")
+        plt.title(key)
+        plt.xlabel("T")
+        plt.ylabel("F")
+        plt.colorbar()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{key}.png"), dpi=120)
+        plt.close()
+
+    for key in tensor_1d_keys:
+        if key not in tensors:
+            continue
+        vec = tensors[key][0].detach().cpu().float().numpy()
+        plt.figure(figsize=(8, 3))
+        plt.plot(vec)
+        plt.title(key)
+        plt.xlabel("D")
+        plt.ylabel("value")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{key}.png"), dpi=120)
+        plt.close()
 
 
 def _resolve_pretrained_path(cfg):
@@ -267,6 +316,13 @@ def run_train(cfg):
     lc_png = os.path.join(out_dir, cfg["filenames"]["learning_curve_png"])
     # BYOL専用の履歴名も追加（既存metrics.csvは互換維持）
     loss_history_csv = os.path.join(out_dir, "loss_history.csv")
+    debug_cfg = cfg.get("debug", {})
+    feature_debug_enabled = bool(debug_cfg.get("feature_visualization", False))
+    feature_debug_ratio = float(debug_cfg.get("feature_visualization_ratio", 0.01))
+    feature_debug_ratio = max(0.0, min(1.0, feature_debug_ratio))
+    debug_dir = os.path.join(out_dir, "debug")
+    if feature_debug_enabled:
+        os.makedirs(debug_dir, exist_ok=True)
     ensure_dir(ckpt_path)
 
     skip_log = os.path.join(out_dir, "skipped_wavs.log")
@@ -280,14 +336,28 @@ def run_train(cfg):
     for epoch in range(1, int(cfg["train"]["epochs"]) + 1):
         model.train()
         train_loss_sum, n_train = 0.0, 0
-        for x, _, _ in tqdm(train_loader, desc=f"train {epoch}"):
+        for x, _, paths in tqdm(train_loader, desc=f"train {epoch}"):
             x = x.to(device)
             x1, x2 = aug(x), aug(x)
             optimizer.zero_grad(set_to_none=True)
-            loss = model.loss(x1, x2)
+            do_feature_debug = feature_debug_enabled and bool(torch.rand(1).item() < feature_debug_ratio)
+            if do_feature_debug:
+                loss, debug_tensors = model.loss(x1, x2, return_debug_tensors=True)
+            else:
+                loss = model.loss(x1, x2)
             loss.backward()
             optimizer.step()
             model._update_target()
+
+            if do_feature_debug and len(paths) > 0:
+                debug_data = {
+                    "x": x,
+                    "x1": x1,
+                    "x2": x2,
+                    **debug_tensors,
+                }
+                _save_feature_debug_images(debug_dir, epoch, paths[0], debug_data)
+
             bs = x.size(0)
             train_loss_sum += float(loss.item()) * bs
             n_train += bs

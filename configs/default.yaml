@@ -302,6 +302,14 @@ eval:
 
 
 # =========================
+# Debug visualization
+# =========================
+debug:
+  feature_visualization: false
+  feature_visualization_ratio: 0.01
+
+
+# =========================
 # Output / Files / Misc
 # =========================
 output_dir: ./result/tmp
