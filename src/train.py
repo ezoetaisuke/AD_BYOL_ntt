@@ -231,6 +231,39 @@ def _save_feature_debug_images(debug_dir: str, epoch: int, source_path: str, ten
         plt.savefig(os.path.join(save_dir, f"{key}.png"), dpi=120)
         plt.close()
 
+    diff_heatmap_specs = [
+        ("x", "x1", "x_minus_x1"),
+        ("x", "x2", "x_minus_x2"),
+    ]
+    for base_key, compare_key, output_name in diff_heatmap_specs:
+        if base_key not in tensors or compare_key not in tensors:
+            continue
+
+        base_arr = tensors[base_key][0, 0].detach().cpu().float().numpy()
+        compare_arr = tensors[compare_key][0, 0].detach().cpu().float().numpy()
+        diff_arr = base_arr - compare_arr
+
+        abs_max = float(np.max(np.abs(diff_arr)))
+        if abs_max == 0:
+            abs_max = 1e-6
+
+        plt.figure(figsize=(8, 4))
+        plt.imshow(
+            diff_arr,
+            aspect="auto",
+            origin="lower",
+            cmap="seismic",
+            vmin=-abs_max,
+            vmax=abs_max,
+        )
+        plt.title(output_name)
+        plt.xlabel("T")
+        plt.ylabel("F")
+        plt.colorbar()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{output_name}.png"), dpi=120)
+        plt.close()
+
     for key in tensor_1d_keys:
         if key not in tensors:
             continue
